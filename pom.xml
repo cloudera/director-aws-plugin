@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  ~ Copyright (c) 2015 Cloudera, Inc.
+  ~
+  ~ Licensed under the Apache License, Version 2.0 (the "License");
+  ~ you may not use this file except in compliance with the License.
+  ~ You may obtain a copy of the License at
+  ~
+  ~ http://www.apache.org/licenses/LICENSE-2.0
+  ~
+  ~ Unless required by applicable law or agreed to in writing, software
+  ~ distributed under the License is distributed on an "AS IS" BASIS,
+  ~ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  ~ See the License for the specific language governing permissions and
+  ~ limitations under the License.
+  -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.cloudera.director</groupId>
+    <artifactId>aws-provider</artifactId>
+    <name>Cloudera Director :: Plugins :: AWS</name>
+    <version>1.0.0-SNAPSHOT</version>
+
+    <properties>
+        <launcher-class>com.cloudera.director.aws.AWSLauncher</launcher-class>
+        <assertj.version>1.6.0</assertj.version>
+        <aws-java-sdk.version>1.9.33</aws-java-sdk.version>
+        <director-spi-v1.version>1.0.0-SNAPSHOT</director-spi-v1.version>
+        <guava.version>15.0</guava.version>
+        <junit.version>4.12</junit.version>
+        <jsr305.version>2.0.2</jsr305.version>
+        <mockito.version>1.10.19</mockito.version>
+        <slf4j.version>1.7.5</slf4j.version>
+        <spring.version>4.1.5.RELEASE</spring.version>
+        <typesafe-config.version>1.2.0</typesafe-config.version>
+        <shade-prefix>com.cloudera.director.aws.shaded</shade-prefix>
+        <maven-checkstyle-plugin.version>2.13</maven-checkstyle-plugin.version>
+        <maven-findbugs-plugin.version>2.5.5</maven-findbugs-plugin.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.cloudera.director</groupId>
+            <artifactId>director-spi-v1</artifactId>
+            <version>${director-spi-v1.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.google.code.findbugs</groupId>
+            <artifactId>jsr305</artifactId>
+            <version>${jsr305.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>${guava.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-core</artifactId>
+            <version>${spring.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-ec2</artifactId>
+            <version>${aws-java-sdk.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-iam</artifactId>
+            <version>${aws-java-sdk.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-rds</artifactId>
+            <version>${aws-java-sdk.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>commons-logging</groupId>
+                    <artifactId>commons-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>jcl-over-slf4j</artifactId>
+            <version>${slf4j.version}</version>
+            <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.typesafe</groupId>
+            <artifactId>config</artifactId>
+            <version>${typesafe-config.version}</version>
+        </dependency>
+
+        <!-- test dependencies -->
+
+        <dependency>
+            <groupId>junit</groupId>
+            <artifactId>junit</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>2.3</version>
+                <configuration>
+                    <artifactSet>
+                        <excludes>
+                            <exclude>junit:junit</exclude>
+                            <exclude>org.assertj:assertj-core</exclude>
+                            <exclude>org.mockito:mockito-core</exclude>
+                        </excludes>
+                    </artifactSet>
+                    <filters>
+                        <filter>
+                            <artifact>com.amazonaws:aws-java-sdk-ec2</artifact>
+                            <excludes>
+                                <exclude>**/*.handlers</exclude>
+                                <exclude>**/*.handler2s</exclude>
+                            </excludes>
+                        </filter>
+                        <filter>
+                            <artifact>*:*</artifact>
+                            <excludes>
+                                <exclude>META-INF/license/**</exclude>
+                                <exclude>META-INF/*</exclude>
+                                <exclude>META-INF/maven/**</exclude>
+                                <exclude>LICENSE</exclude>
+                                <exclude>NOTICE</exclude>
+                                <exclude>/*.txt</exclude>
+                                <exclude>build.properties</exclude>
+                            </excludes>
+                        </filter>
+                    </filters>
+                    <relocations>
+                        <relocation><!-- jsr305 -->
+                            <pattern>javax.annotation</pattern>
+                            <shadedPattern>${shade-prefix}.javax.annotation</shadedPattern>
+                        </relocation>
+                        <relocation><!-- guava -->
+                            <pattern>com.google.common</pattern>
+                            <shadedPattern>${shade-prefix}.com.google.common</shadedPattern>
+                        </relocation>
+                        <relocation><!-- spring-core -->
+                            <pattern>org.springframework</pattern>
+                            <shadedPattern>${shade-prefix}.org.springframework</shadedPattern>
+                        </relocation>
+                        <relocation><!-- commons-logging, via spring-core and aws-java-sdk -->
+                            <pattern>org.apache.commons.logging</pattern>
+                            <shadedPattern>${shade-prefix}.org.apache.commons.logging</shadedPattern>
+                        </relocation>
+                        <relocation><!-- config -->
+                            <pattern>com.typesafe.config</pattern>
+                            <shadedPattern>${shade-prefix}.com.typesafe.config</shadedPattern>
+                        </relocation>
+                        <relocation><!-- jackson, via aws-java-sdk -->
+                            <pattern>com.fasterxml.jackson</pattern>
+                            <shadedPattern>${shade-prefix}.com.fasterxml.jackson</shadedPattern>
+                        </relocation>
+                        <relocation><!-- aws core, via aws-java-sdk -->
+                            <pattern>com.amazonaws</pattern>
+                            <shadedPattern>${shade-prefix}.com.amazonaws</shadedPattern>
+                        </relocation>
+                        <relocation><!-- commons-codec, via aws-java-sdk -->
+                            <pattern>org.apache.commons.codec</pattern>
+                            <shadedPattern>${shade-prefix}.org.apache.commons.codec</shadedPattern>
+                        </relocation>
+                        <relocation><!-- joda-time, via aws-java-sdk -->
+                            <pattern>org.joda.time</pattern>
+                            <shadedPattern>${shade-prefix}.org.joda.time</shadedPattern>
+                        </relocation>
+                        <relocation><!-- httpclient, via aws-java-sdk -->
+                            <pattern>org.apache.http</pattern>
+                            <shadedPattern>${shade-prefix}.org.apache.http</shadedPattern>
+                        </relocation>
+                        <relocation>
+                            <pattern>org.slf4j</pattern>
+                            <shadedPattern>${shade-prefix}.org.slf4j</shadedPattern>
+                        </relocation>
+                    </relocations>
+                    <transformers>
+                        <transformer
+                            implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                    </transformers>
+                </configuration>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>shade</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Cloudera-Director-SPI-Version>v1</Cloudera-Director-SPI-Version>
+                            <Cloudera-Director-Launcher-Class>${launcher-class}</Cloudera-Director-Launcher-Class>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-checkstyle-plugin</artifactId>
+                <version>${maven-checkstyle-plugin.version}</version>
+                <configuration>
+                    <configLocation>checkstyle.xml</configLocation>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>findbugs-maven-plugin</artifactId>
+                <version>${maven-findbugs-plugin.version}</version>
+                <configuration>
+                    <excludeFilterFile>findbugs-exclude.xml</excludeFilterFile>
+                    <failOnError>false</failOnError>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>
