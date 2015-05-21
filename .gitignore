@@ -38,3 +38,5 @@ clients/webapp/src/main/.tern-port
 #ignore temporary files
 .#*
 \#*
+
+dependency-reduced-pom.xml
