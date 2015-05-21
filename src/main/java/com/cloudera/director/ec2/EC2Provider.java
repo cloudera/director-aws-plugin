@@ -55,10 +55,12 @@ import com.cloudera.director.Tags;
 import com.cloudera.director.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.compute.util.AbstractComputeProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
+import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.Resource;
+import com.cloudera.director.spi.v1.model.util.CompositeConfigurationValidator;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
 import com.cloudera.director.spi.v1.model.util.SimpleResourceTemplate;
@@ -151,6 +153,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         .name("Associate public IP addresses")
         .widget(ConfigurationProperty.Widget.CHECKBOX)
         .defaultValue("true")
+        .type(ConfigurationProperty.Type.BOOLEAN)
         .defaultDescription("Whether to associate a public IP address with instances.")
         .build()),
 
@@ -165,6 +168,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         .name("EC2 region")
         .defaultValue("us-east-1")
         .defaultDescription("The EC2 region.")
+        .widget(ConfigurationProperty.Widget.OPENLIST)
         .addValidValues(
             "ap-northeast-1",
             "ap-southeast-1",
@@ -213,26 +217,33 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private final AmazonIdentityManagementClient identityManagementClient;
 
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
+  private final VirtualizationMappings virtualizationMappings;
+
   private final boolean associatePublicIpAddresses;
+
+  private final ConfigurationValidator resourceTemplateConfigurationValidator;
 
   /**
    * Construct a new provider instance and validate all configurations.
    *
    * @param configuration            the configuration
    * @param ephemeralDeviceMappings  the ephemeral device mappings
+   * @param virtualizationMappings   the virtualization mappings
    * @param client                   the EC2 client
    * @param identityManagementClient the AIM client
    * @param cloudLocalizationContext the parent cloud localization context
    */
   public EC2Provider(Configured configuration,
       EphemeralDeviceMappings ephemeralDeviceMappings,
-      AmazonEC2Client client,
+      VirtualizationMappings virtualizationMappings, AmazonEC2Client client,
       AmazonIdentityManagementClient identityManagementClient,
       LocalizationContext cloudLocalizationContext) {
     super(configuration, METADATA, cloudLocalizationContext);
     LocalizationContext localizationContext = getLocalizationContext();
     this.ephemeralDeviceMappings =
         checkNotNull(ephemeralDeviceMappings, "ephemeralDeviceMappings is null");
+    this.virtualizationMappings =
+        checkNotNull(virtualizationMappings, "virtualizationMappings is null");
     this.client = checkNotNull(client, "client is null");
     this.identityManagementClient = checkNotNull(identityManagementClient,
         "identityManagementClient is null");
@@ -248,6 +259,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     this.associatePublicIpAddresses = Boolean.parseBoolean(
         getConfigurationValue(ASSOCIATE_PUBLIC_IP_ADDRESSES, localizationContext));
+
+    this.resourceTemplateConfigurationValidator =
+        new CompositeConfigurationValidator(METADATA.getResourceTemplateConfigurationValidator(),
+            new EC2InstanceTemplateConfigurationValidator(this));
   }
 
   public AmazonEC2Client getClient() {
@@ -256,6 +271,29 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
   public AmazonIdentityManagementClient getIdentityManagementClient() {
     return identityManagementClient;
+  }
+
+  /**
+   * Returns the ephemeral device mappings.
+   *
+   * @return the ephemeral device mappings
+   */
+  public EphemeralDeviceMappings getEphemeralDeviceMappings() {
+    return ephemeralDeviceMappings;
+  }
+
+  /**
+   * Returns the virtualization mappings.
+   *
+   * @return the virtualization mappings
+   */
+  public VirtualizationMappings getVirtualizationMappings() {
+    return virtualizationMappings;
+  }
+
+  @Override
+  public ConfigurationValidator getResourceTemplateConfigurationValidator() {
+    return resourceTemplateConfigurationValidator;
   }
 
   @Override
@@ -270,7 +308,166 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     LocalizationContext providerLocalizationContext = getLocalizationContext();
     LocalizationContext templateLocalizationContext =
         SimpleResourceTemplate.getTemplateLocalizationContext(providerLocalizationContext);
+    configuration = enhanceTemplateConfiguration(name, configuration, templateLocalizationContext);
 
+    return new EC2InstanceTemplate(name, configuration, tags, providerLocalizationContext);
+  }
+
+  @Override
+  public void allocate(EC2InstanceTemplate template, Collection<String> virtualInstanceIds,
+      int minCount) throws InterruptedException {
+    int instanceCount = virtualInstanceIds.size();
+
+    LOG.info(">> Requesting {} instances for {}", instanceCount, template);
+
+    RunInstancesResult runInstancesResult =
+        client.runInstances(newRunInstancesRequest(template, virtualInstanceIds, minCount));
+
+    if (!LOG.isInfoEnabled()) {
+      LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
+          summarizeReservationForLogging(runInstancesResult.getReservation()));
+    }
+
+    // Tag all the new instances so that we can easily find them later on
+
+    List<Tag> userDefinedTags = Lists.newArrayListWithExpectedSize(template.getTags().size());
+    for (Map.Entry<String, String> entry : template.getTags().entrySet()) {
+      userDefinedTags.add(new Tag(entry.getKey(), entry.getValue()));
+    }
+
+    final Set<String> instancesWithNoPrivateIp = Sets.newHashSet();
+
+    List<Instance> instances = runInstancesResult.getReservation().getInstances();
+    for (Map.Entry<String, Instance> entry : zipWith(virtualInstanceIds, instances)) {
+
+      String virtualInstanceId = entry.getKey();
+      Instance instance = entry.getValue();
+      String ec2InstanceId = instance.getInstanceId();
+
+      LOG.info(">> Tagging {} / {}", ec2InstanceId, virtualInstanceId);
+      List<Tag> tags = Lists.newArrayList(
+          new Tag(InstanceTags.INSTANCE_NAME, String.format("%s-%s",
+              template.getInstanceNamePrefix(), virtualInstanceId)),
+          new Tag(Tags.CLOUDERA_DIRECTOR_ID, virtualInstanceId),
+          new Tag(Tags.CLOUDERA_DIRECTOR_TEMPLATE_NAME, template.getName())
+      );
+      tags.addAll(userDefinedTags);
+
+      // Wait for the instance to become visible
+      while (!instanceExists(ec2InstanceId)) {
+        TimeUnit.SECONDS.sleep(5);
+      }
+      client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
+
+      if (instance.getPrivateIpAddress() == null) {
+        instancesWithNoPrivateIp.add(ec2InstanceId);
+      } else {
+        LOG.info("<< Instance {} got IP {}", ec2InstanceId, instance.getPrivateIpAddress());
+      }
+    }
+
+    // Wait until all of them have a private IP (it should be pretty fast)
+
+    while (!instancesWithNoPrivateIp.isEmpty()) {
+      LOG.info(">> Waiting for {} instance(s) to get a private IP allocated",
+          instancesWithNoPrivateIp.size());
+
+      DescribeInstancesResult result = client.describeInstances(
+          new DescribeInstancesRequest().withInstanceIds(instancesWithNoPrivateIp));
+      forEachInstance(result, new InstanceHandler() {
+        @Override
+        public void handle(Instance instance) {
+          if (instance.getPrivateIpAddress() != null) {
+            String ec2InstanceId = instance.getInstanceId();
+
+            LOG.info("<< Instance {} got IP {}", ec2InstanceId, instance.getPrivateIpAddress());
+
+            instancesWithNoPrivateIp.remove(ec2InstanceId);
+          }
+        }
+      });
+
+      if (!instancesWithNoPrivateIp.isEmpty()) {
+        LOG.info("Waiting 5 seconds until next check, {} instance(s) still don't have an IP",
+            instancesWithNoPrivateIp.size());
+
+        TimeUnit.SECONDS.sleep(5);
+      }
+    }
+  }
+
+  @Override
+  public Collection<EC2Instance> find(final EC2InstanceTemplate template,
+      Collection<String> virtualInstanceIds) throws InterruptedException {
+
+    LOG.debug("Finding virtual instances {}", virtualInstanceIds);
+    final Collection<EC2Instance> ec2Instances =
+        Lists.newArrayListWithExpectedSize(virtualInstanceIds.size());
+
+    forEachInstance(virtualInstanceIds, new InstanceHandler() {
+      @Override
+      public void handle(Instance instance) {
+        String virtualInstanceId = checkInstanceIsManagedByDirector(instance, template);
+        ec2Instances.add(new EC2Instance(template, virtualInstanceId, instance));
+      }
+    });
+
+    LOG.debug("Found {} instances for {} virtual instance IDs", ec2Instances.size(),
+        virtualInstanceIds.size());
+    return ec2Instances;
+  }
+
+  @Override
+  @SuppressWarnings("PMD.UnusedFormalParameter")
+  public void delete(EC2InstanceTemplate template,
+      Collection<String> virtualInstanceIds) throws InterruptedException {
+
+    if (virtualInstanceIds.isEmpty()) {
+      return;
+    }
+
+    Map<String, String> ec2InstanceIdsByVirtualInstanceId =
+        getEC2InstanceIdsByVirtualInstanceId(virtualInstanceIds);
+    Collection<String> ec2InstanceIds = ec2InstanceIdsByVirtualInstanceId.values();
+
+    LOG.info(">> Terminating {}", ec2InstanceIds);
+    TerminateInstancesResult terminateResult = client.terminateInstances(
+        new TerminateInstancesRequest().withInstanceIds(ec2InstanceIds));
+    LOG.info("<< Result {}", terminateResult);
+
+    if (ec2InstanceIdsByVirtualInstanceId.size() != virtualInstanceIds.size()) {
+      Set<String> missingVirtualInstanceIds = Sets.newLinkedHashSet();
+      for (String virtualInstanceId : virtualInstanceIds) {
+        if (!ec2InstanceIdsByVirtualInstanceId.containsKey(virtualInstanceId)) {
+          missingVirtualInstanceIds.add(virtualInstanceId);
+        }
+      }
+      LOG.info("Unable to terminate unknown instances {}", missingVirtualInstanceIds);
+    }
+  }
+
+  @Override
+  @SuppressWarnings("PMD.UnusedFormalParameter")
+  public Map<String, InstanceState> getInstanceState(EC2InstanceTemplate template,
+      Collection<String> virtualInstanceIds) {
+    Map<String, InstanceState> instanceStateByVirtualInstanceId =
+        Maps.newHashMapWithExpectedSize(virtualInstanceIds.size());
+
+    // Partition full requests into multiple batch requests, AWS limits
+    // the total number of instance status requests you can make.
+    List<List<String>> partitions =
+        Lists.partition(Lists.newArrayList(virtualInstanceIds), MAX_INSTANCE_STATUS_REQUESTS);
+
+    for (List<String> partition : partitions) {
+      instanceStateByVirtualInstanceId.putAll(getBatchInstanceState(partition));
+    }
+
+    return instanceStateByVirtualInstanceId;
+  }
+
+  @Override
+  protected Configured enhanceTemplateConfiguration(String name, Configured configuration,
+      LocalizationContext templateLocalizationContext) {
     // Add the key name to the configuration if possible.
     String privateKeyString =
         configuration.getConfigurationValue(SSH_JCE_PRIVATE_KEY, templateLocalizationContext);
@@ -282,17 +479,16 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     } else {
       LOG.warn("No private key fingerprint specified for template {}", name);
     }
-
-    return new EC2InstanceTemplate(name, configuration, tags, providerLocalizationContext);
+    return configuration;
   }
 
   /**
    * Adds the AWS key name corresponding to a private key to the given
    * configuration.
    *
-   * @param configuration    configuration to add to
+   * @param configuration    the configuration to be enhanced
    * @param privateKeyString private key, in serialized form
-   * @return changed configuration
+   * @return the enhanced configuration
    * @throws IllegalArgumentException if the key could not be deserialized, or if no key known to
    *                                  AWS matches this key's fingerprint
    */
@@ -370,6 +566,15 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     return DatatypeConverter.printHexBinary(fingerprintBytes).toLowerCase(Locale.US);
   }
 
+  /**
+   * Returns the key name corresponding to the specified fingerprints, or {@code null} if it
+   * cannot be determined.
+   *
+   * @param privateKeyFingerprint the private key fingerprint
+   * @param publicKeyFingerprint  the public key fingerprint
+   * @return the key name corresponding to the specified fingerprints, or {@code null} if it
+   * cannot be determined
+   */
   private String lookupKeyName(String privateKeyFingerprint, String publicKeyFingerprint) {
     DescribeKeyPairsResult keyPairsResult = client.describeKeyPairs();
     for (KeyPairInfo keyPairInfo : keyPairsResult.getKeyPairs()) {
@@ -383,153 +588,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       }
     }
     return null;
-  }
-
-  @Override
-  public void allocate(EC2InstanceTemplate template, Collection<String> virtualInstanceIds,
-      int minCount) throws InterruptedException {
-    int instanceCount = virtualInstanceIds.size();
-
-    LOG.info(">> Requesting {} instances for {}", instanceCount, template);
-
-    RunInstancesResult runInstancesResult =
-        client.runInstances(newRunInstancesRequest(template, virtualInstanceIds, minCount));
-
-    if (!LOG.isInfoEnabled()) {
-      LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
-          summarizeReservationForLogging(runInstancesResult.getReservation()));
-    }
-
-    // Tag all the new instances so that we can easily find them later on
-
-    List<Tag> userDefinedTags = Lists.newArrayListWithExpectedSize(template.getTags().size());
-    for (Map.Entry<String, String> entry : template.getTags().entrySet()) {
-      userDefinedTags.add(new Tag(entry.getKey(), entry.getValue()));
-    }
-
-    final Set<String> instancesWithNoPrivateIp = Sets.newHashSet();
-
-    List<Instance> instances = runInstancesResult.getReservation().getInstances();
-    for (Map.Entry<String, Instance> entry : zipWith(virtualInstanceIds, instances)) {
-
-      String virtualInstanceId = entry.getKey();
-      Instance instance = entry.getValue();
-      String ec2InstanceId = instance.getInstanceId();
-
-      LOG.info(">> Tagging {} / {}", ec2InstanceId, virtualInstanceId);
-      List<Tag> tags = Lists.newArrayList(
-          new Tag(InstanceTags.INSTANCE_NAME, String.format("%s-%s",
-              template.getInstanceNamePrefix(), virtualInstanceId)),
-          new Tag(Tags.CLOUDERA_DIRECTOR_ID, virtualInstanceId),
-          new Tag(Tags.CLOUDERA_DIRECTOR_TEMPLATE_NAME, template.getName())
-      );
-      tags.addAll(userDefinedTags);
-
-      // Wait for the instance to become visible
-      while (!instanceExists(ec2InstanceId)) {
-        TimeUnit.SECONDS.sleep(5);
-      }
-      client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
-
-      if (instance.getPrivateIpAddress() == null) {
-        instancesWithNoPrivateIp.add(ec2InstanceId);
-      }
-    }
-
-    // Wait until all of them have a private IP (it should be pretty fast)
-
-    while (!instancesWithNoPrivateIp.isEmpty()) {
-      LOG.info(">> Waiting for {} instance(s) to get a private IP allocated",
-          instancesWithNoPrivateIp.size());
-
-      DescribeInstancesResult result = client.describeInstances(
-          new DescribeInstancesRequest().withInstanceIds(instancesWithNoPrivateIp));
-      forEachInstance(result, new InstanceHandler() {
-        @Override
-        public void handle(Instance instance) {
-          if (instance.getPrivateIpAddress() != null) {
-            String ec2InstanceId = instance.getInstanceId();
-
-            LOG.info("<< Instance {} got IP {}", ec2InstanceId, instance.getPrivateIpAddress());
-
-            instancesWithNoPrivateIp.remove(ec2InstanceId);
-          }
-        }
-      });
-
-      if (!instancesWithNoPrivateIp.isEmpty()) {
-        LOG.info("Waiting 5 seconds until next check, {} instance(s) still don't have an IP",
-            instancesWithNoPrivateIp.size());
-
-        TimeUnit.SECONDS.sleep(5);
-      }
-    }
-  }
-
-  @Override
-  public Collection<EC2Instance> find(final EC2InstanceTemplate template,
-      Collection<String> virtualInstanceIds) throws InterruptedException {
-
-    final Collection<EC2Instance> ec2Instances =
-        Lists.newArrayListWithExpectedSize(virtualInstanceIds.size());
-
-    forEachInstance(virtualInstanceIds, new InstanceHandler() {
-      @Override
-      public void handle(Instance instance) {
-        String virtualInstanceId = checkInstanceIsManagedByDirector(instance, template);
-        ec2Instances.add(new EC2Instance(template, virtualInstanceId, instance));
-      }
-    });
-
-    return ec2Instances;
-  }
-
-  @Override
-  @SuppressWarnings("PMD.UnusedFormalParameter")
-  public void delete(EC2InstanceTemplate template,
-      Collection<String> virtualInstanceIds) throws InterruptedException {
-
-    if (virtualInstanceIds.isEmpty()) {
-      return;
-    }
-
-    Map<String, String> ec2InstanceIdsByVirtualInstanceId =
-        getEC2InstanceIdsByVirtualInstanceId(virtualInstanceIds);
-    Collection<String> ec2InstanceIds = ec2InstanceIdsByVirtualInstanceId.values();
-
-    LOG.info(">> Terminating {}", ec2InstanceIds);
-    TerminateInstancesResult terminateResult = client.terminateInstances(
-        new TerminateInstancesRequest().withInstanceIds(ec2InstanceIds));
-    LOG.info("<< Result {}", terminateResult);
-
-    if (ec2InstanceIdsByVirtualInstanceId.size() != virtualInstanceIds.size()) {
-      Set<String> missingVirtualInstanceIds = Sets.newLinkedHashSet();
-      for (String virtualInstanceId : virtualInstanceIds) {
-        if (!ec2InstanceIdsByVirtualInstanceId.containsKey(virtualInstanceId)) {
-          missingVirtualInstanceIds.add(virtualInstanceId);
-        }
-      }
-      LOG.info("Unable to terminate unknown instances {}", missingVirtualInstanceIds);
-    }
-  }
-
-  @Override
-  @SuppressWarnings("PMD.UnusedFormalParameter")
-  public Map<String, InstanceState> getInstanceState(EC2InstanceTemplate template,
-      Collection<String> virtualInstanceIds) {
-    Map<String, InstanceState> instanceStateByVirtualInstanceId =
-        Maps.newHashMapWithExpectedSize(virtualInstanceIds.size());
-
-    // Partition full requests into multiple batch requests, AWS limits
-    // the total number of instance status requests you can make.
-    List<List<String>> partitions =
-        Lists.partition(Lists.newArrayList(virtualInstanceIds), MAX_INSTANCE_STATUS_REQUESTS);
-
-    for (List<String> partition : partitions) {
-      instanceStateByVirtualInstanceId.putAll(getBatchInstanceState(partition));
-    }
-
-    return instanceStateByVirtualInstanceId;
   }
 
   /**
@@ -869,6 +927,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     while (!(reservations = result.getReservations()).isEmpty()) {
       for (Reservation reservation : reservations) {
         for (Instance instance : reservation.getInstances()) {
+          LOG.debug("Calling instance handler with instance {}", instance);
           instanceHandler.handle(instance);
         }
       }

@@ -46,7 +46,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   /**
    * A splitter for comma-separated lists.
    */
-  private static final Splitter CSV_SPLITTER = Splitter.on(",").trimResults().omitEmptyStrings();
+  protected static final Splitter CSV_SPLITTER = Splitter.on(",").trimResults().omitEmptyStrings();
 
   /**
    * The list of configuration properties (including inherited properties).
@@ -133,6 +133,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .name("Root volume size (GB)")
         .defaultValue("50")
         .defaultDescription("The size of the root partition (in GB).")
+        .widget(ConfigurationProperty.Widget.NUMBER)
+        .type(ConfigurationProperty.Type.INTEGER)
         .build()),
 
     /**
@@ -155,6 +157,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     SECURITY_GROUP_IDS(new SimpleConfigurationPropertyBuilder()
         .configKey("securityGroupsIds")
         .name("Security group IDs")
+        .widget(ConfigurationProperty.Widget.OPENMULTI)
         .required(true)
         .defaultDescription("The VPC security group IDs.")
         .defaultErrorMessage("VPC security group IDs are mandatory")

@@ -210,7 +210,7 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
             "file:" + ephemeralDeviceMappingsConfigProperties.getCustomMappingsPath()
         );
       } catch (IOException e) {
-        throw new IllegalArgumentException("Could not load custom ephemeral device mappings", e);
+        throw new IllegalArgumentException("Could not load ephemeral device mappings", e);
       }
     }
 

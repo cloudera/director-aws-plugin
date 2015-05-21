@@ -92,21 +92,14 @@
               <pattern>org.slf4j</pattern>
               <shadedPattern>${shade-prefix}.org.slf4j</shadedPattern>
             </relocation>
+            <relocation>
+              <pattern>ch.qos.logback</pattern>
+              <shadedPattern>${shade-prefix}.ch.qos.logback</shadedPattern>
+            </relocation>
           </relocations>
           <transformers>
             <transformer />
           </transformers>
-        </configuration>
-      </plugin>
-      <plugin>
-        <artifactId>maven-jar-plugin</artifactId>
-        <configuration>
-          <archive>
-            <manifestEntries>
-              <Cloudera-Director-SPI-Version>v1</Cloudera-Director-SPI-Version>
-              <Cloudera-Director-Launcher-Class>${launcher-class}</Cloudera-Director-Launcher-Class>
-            </manifestEntries>
-          </archive>
         </configuration>
       </plugin>
       <plugin>
@@ -177,6 +170,9 @@
     <shade-prefix>com.cloudera.director.aws.shaded</shade-prefix>
     <guava.version>15.0</guava.version>
     <aws-java-sdk.version>1.9.33</aws-java-sdk.version>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <logback.version>1.1.2</logback.version>
     <assertj.version>1.6.0</assertj.version>
     <maven-checkstyle-plugin.version>2.13</maven-checkstyle-plugin.version>
     <mockito.version>1.10.19</mockito.version>

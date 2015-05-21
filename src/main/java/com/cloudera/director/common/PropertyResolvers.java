@@ -128,7 +128,8 @@ public final class PropertyResolvers {
       boolean allowMissing)
       throws IOException {
     try {
-      return new ResourcePropertySource(name, loc);
+      return new ResourcePropertySource(name, loc,
+                                        PropertyResolvers.class.getClassLoader());
     } catch (IOException e) {
       if (allowMissing) {
         return null;

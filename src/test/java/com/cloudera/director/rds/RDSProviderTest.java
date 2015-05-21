@@ -131,8 +131,7 @@ public class RDSProviderTest {
             instanceTemplate,
             virtualInstanceIds,
             EnumSet.of(InstanceStatus.RUNNING),
-            EnumSet.of(InstanceStatus.DELETED, InstanceStatus.FAILED, InstanceStatus.STOPPED,
-                InstanceStatus.UNKNOWN)
+            EnumSet.of(InstanceStatus.DELETED, InstanceStatus.FAILED, InstanceStatus.STOPPED)
         );
 
         for (Map.Entry<String, InstanceState> entry : instanceStates.entrySet()) {
@@ -156,8 +155,8 @@ public class RDSProviderTest {
           rdsProvider,
           instanceTemplate,
           virtualInstanceIds,
-          EnumSet.of(InstanceStatus.DELETED),
-          EnumSet.of(InstanceStatus.FAILED, InstanceStatus.STOPPED, InstanceStatus.UNKNOWN)
+          EnumSet.of(InstanceStatus.DELETED, InstanceStatus.UNKNOWN),
+          EnumSet.of(InstanceStatus.FAILED, InstanceStatus.STOPPED)
       );
 
       for (Map.Entry<String, InstanceState> entry : instanceStates.entrySet()) {

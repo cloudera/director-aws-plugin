@@ -25,6 +25,7 @@ import static org.junit.Assert.assertTrue;
 import com.cloudera.director.config.HttpProxyConfigProperties;
 import com.cloudera.director.ec2.EC2Provider;
 import com.cloudera.director.ec2.EphemeralDeviceMappings;
+import com.cloudera.director.ec2.VirtualizationMappings;
 import com.cloudera.director.rds.RDSProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.Configured;
@@ -37,6 +38,7 @@ import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -66,16 +68,23 @@ public class AWSProviderTest {
     EphemeralDeviceMappings ephemeralDeviceMappings =
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.large", 1),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
+    // Configure virtualization mappings
+    VirtualizationMappings virtualizationMappings =
+        VirtualizationMappings.getTestInstance(ImmutableMap.of("hvm", Arrays.asList("m3.large")),
+            DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
     HttpProxyConfigProperties httpProxyConfigProperties =
         new HttpProxyConfigProperties(new SimpleConfiguration(),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
     LocalizationContext cloudLocalizationContext =
         AWSProvider.METADATA.getLocalizationContext(DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
     AWSClientConfig awsClientConfig = new AWSClientConfig(new SimpleConfiguration(),
         httpProxyConfigProperties, cloudLocalizationContext);
     Configured configuration = new SimpleConfiguration(environmentConfig);
     AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings,
-        awsClientConfig,
+        virtualizationMappings, awsClientConfig,
         AWSProvider.getCredentialsProviderChain(configuration,
             cloudLocalizationContext),
         cloudLocalizationContext);

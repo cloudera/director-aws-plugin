@@ -36,12 +36,17 @@ import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateC
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.PORT;
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.PREFERRED_BACKUP_WINDOW;
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.PREFERRED_MAINTENANCE_WINDOW;
+import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.SKIP_FINAL_SNAPSHOT;
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_TYPE;
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.TDE_CREDENTIAL_ARN;
 import static com.cloudera.director.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.VPC_SECURITY_GROUP_IDS;
+import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_PASSWORD;
+import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_USERNAME;
+import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.TYPE;
 
 import com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate;
+import com.cloudera.director.spi.v1.database.DatabaseType;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
@@ -228,6 +233,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
     DB_SECURITY_GROUP_IDS(new SimpleConfigurationPropertyBuilder()
         .configKey("dbSecurityGroups")
         .name("DB security groups")
+        .widget(ConfigurationProperty.Widget.OPENMULTI)
         .defaultDescription(
             "The comma-separated list of DB security groups to associate with this DB instance.")
         .build()),
@@ -247,12 +253,12 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
      * The name of the database engine to be used for this instance.
      */
     ENGINE(new SimpleConfigurationPropertyBuilder()
-        .configKey("engine")
+        .configKey(TYPE.unwrap().getConfigKey())
         .name("DB engine")
         .defaultDescription("The name of the database engine to be used for this instance.")
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .addValidValues(
-            "mysql"
+            RDSEngines.getEngine(DatabaseType.MYSQL).toLowerCase()
             //"oracle-ee",
             //"oracle-se",
             //"oracle-se1",
@@ -307,7 +313,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
      * The name of master user for the client DB instance.
      */
     MASTER_USERNAME(new SimpleConfigurationPropertyBuilder()
-        .configKey("masterUsername")
+        .configKey(ADMIN_USERNAME.unwrap().getConfigKey())
         .name("Master username")
         .defaultDescription("The name of master user for the client DB instance.")
         .build()),
@@ -316,7 +322,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
      * The password for the master database user.
      */
     MASTER_USER_PASSWORD(new SimpleConfigurationPropertyBuilder()
-        .configKey("masterUserPassword")
+        .configKey(ADMIN_PASSWORD.unwrap().getConfigKey())
         .name("Master user password")
         .defaultDescription("The password for the master database user.")
         .build()),
@@ -380,6 +386,16 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
         .build()),
 
     /**
+     * Whether to skip a final snapshot before a DB instance is deleted.
+    */
+    SKIP_FINAL_SNAPSHOT(new SimpleConfigurationPropertyBuilder()
+        .configKey("skipFinalSnapshot")
+        .name("Skip final snapshot")
+        .widget(ConfigurationProperty.Widget.CHECKBOX)
+        .defaultDescription("Whether to skip a final snapshot before the DB instance is deleted.")
+        .build()),
+
+    /**
      * Whether the DB instance is encrypted.
      */
     STORAGE_ENCRYPTED(new SimpleConfigurationPropertyBuilder()
@@ -413,6 +429,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
     VPC_SECURITY_GROUP_IDS(new SimpleConfigurationPropertyBuilder()
         .configKey("vpcSecurityGroupIds")
         .name("VPC security group IDs")
+        .widget(ConfigurationProperty.Widget.OPENMULTI)
         .required(true)
         .defaultDescription(
             "The comma-separated list of EC2 VPC security groups"
@@ -565,6 +582,11 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
   private final Optional<Boolean> publiclyAccessible;
 
   /**
+   * Whether to skip a final snapshot before the DB instance is deleted.
+   */
+  private final Optional<Boolean> skipFinalSnapshot;
+
+  /**
    * Whether the DB instance is encrypted.
    */
   private final Optional<Boolean> storageEncrypted;
@@ -663,6 +685,8 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
         getOptionalConfigurationValue(PREFERRED_MAINTENANCE_WINDOW, localizationContext);
     this.publiclyAccessible =
         getOptionalBooleanConfigurationValue(AUTO_MINOR_VERSION_UPGRADE, localizationContext);
+    this.skipFinalSnapshot =
+        getOptionalBooleanConfigurationValue(SKIP_FINAL_SNAPSHOT, localizationContext);
     this.storageEncrypted =
         getOptionalBooleanConfigurationValue(STORAGE_ENCRYPTED, localizationContext);
     this.storageType =
@@ -899,6 +923,15 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    */
   public Optional<Boolean> isPubliclyAccessible() {
     return publiclyAccessible;
+  }
+
+  /**
+   * Returns whether to skip a final snapshot before the DB instance is deleted.
+   *
+   * @return whether to skip a final snapshot before the DB instance is deleted.
+   */
+  public Optional<Boolean> isSkipFinalSnapshot() {
+    return skipFinalSnapshot;
   }
 
   /**

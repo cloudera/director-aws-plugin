@@ -23,6 +23,7 @@ import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.rds.AmazonRDSClient;
 import com.cloudera.director.ec2.EC2Provider;
 import com.cloudera.director.ec2.EphemeralDeviceMappings;
+import com.cloudera.director.ec2.VirtualizationMappings;
 import com.cloudera.director.rds.RDSProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.Configured;
@@ -89,6 +90,11 @@ public class AWSProvider extends AbstractCloudProvider {
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
 
   /**
+   * The virtualization mappings.
+   */
+  private final VirtualizationMappings virtualizationMappings;
+
+  /**
    * The AWS config.
    */
   private final AWSClientConfig awsClientConfig;
@@ -98,12 +104,13 @@ public class AWSProvider extends AbstractCloudProvider {
    *
    * @param configuration           the configuration
    * @param ephemeralDeviceMappings the ephemeral device mappings
+   * @param virtualizationMappings  the virtualization mappings
    * @param awsClientConfig         the AWS client configuration
    * @param rootLocalizationContext the root localization context
    */
   public AWSProvider(Configured configuration, EphemeralDeviceMappings ephemeralDeviceMappings,
-      AWSClientConfig awsClientConfig, LocalizationContext rootLocalizationContext) {
-    this(configuration, ephemeralDeviceMappings, awsClientConfig,
+      VirtualizationMappings virtualizationMappings, AWSClientConfig awsClientConfig, LocalizationContext rootLocalizationContext) {
+    this(configuration, ephemeralDeviceMappings, virtualizationMappings, awsClientConfig,
         getCredentialsProviderChain(configuration,
             METADATA.getLocalizationContext(rootLocalizationContext)),
         rootLocalizationContext);
@@ -114,18 +121,21 @@ public class AWSProvider extends AbstractCloudProvider {
    *
    * @param configuration            the configuration
    * @param ephemeralDeviceMappings  the ephemeral device mappings
+   * @param virtualizationMappings   the virtualization mappings
    * @param awsClientConfig          the AWS client configuration
    * @param credentialsProviderChain the AWS credentialsProviderChain
    * @param rootLocalizationContext  the root localization context
    */
   @SuppressWarnings({"PMD.UnusedFormalParameter", "UnusedParameters"})
   public AWSProvider(Configured configuration, EphemeralDeviceMappings ephemeralDeviceMappings,
-      AWSClientConfig awsClientConfig, AWSCredentialsProviderChain credentialsProviderChain,
+      VirtualizationMappings virtualizationMappings, AWSClientConfig awsClientConfig,
+      AWSCredentialsProviderChain credentialsProviderChain,
       LocalizationContext rootLocalizationContext) {
     super(METADATA, rootLocalizationContext);
     this.credentialsProviderChain =
         checkNotNull(credentialsProviderChain, "credentialsProviderChain is null");
     this.ephemeralDeviceMappings = ephemeralDeviceMappings;
+    this.virtualizationMappings = virtualizationMappings;
     this.awsClientConfig = awsClientConfig;
   }
 
@@ -151,7 +161,7 @@ public class AWSProvider extends AbstractCloudProvider {
   protected EC2Provider createEC2Provider(Configured target) {
     ClientConfiguration clientConfiguration = getClientConfiguration();
     return new EC2Provider(target, ephemeralDeviceMappings,
-        new AmazonEC2Client(credentialsProviderChain, clientConfiguration),
+        virtualizationMappings, new AmazonEC2Client(credentialsProviderChain, clientConfiguration),
         new AmazonIdentityManagementClient(credentialsProviderChain, clientConfiguration),
         getLocalizationContext());
   }

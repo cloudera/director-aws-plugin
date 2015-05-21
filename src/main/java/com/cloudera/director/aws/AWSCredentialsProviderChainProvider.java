@@ -122,6 +122,7 @@ public class AWSCredentialsProviderChainProvider
       SECRET_ACCESS_KEY(new SimpleConfigurationPropertyBuilder()
           .configKey("secretAccessKey")
           .name("Secret access key")
+          .widget(ConfigurationProperty.Widget.PASSWORD)
           .defaultDescription("The AWS secret access key.")
           .defaultErrorMessage("AWS credentials configuration is missing a secret access key")
           .sensitive(true)
@@ -138,6 +139,7 @@ public class AWSCredentialsProviderChainProvider
           .name("Session token")
           .defaultDescription("The AWS session token.")
           .sensitive(true)
+          .hidden(true)
           .build());
 
       /**

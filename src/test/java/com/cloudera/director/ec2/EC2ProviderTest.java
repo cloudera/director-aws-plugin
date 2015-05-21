@@ -77,6 +77,11 @@ public class EC2ProviderTest {
           EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.medium", 1),
               DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
+      // Configure virtualization mappings
+      VirtualizationMappings virtualizationMappings =
+          VirtualizationMappings.getTestInstance(ImmutableMap.of("hvm", Arrays.asList("m3.medium")),
+              DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
       // Configure credentials
       Map<String, String> credentialsConfigMap = new LinkedHashMap<String, String>();
       SimpleConfiguration credentialsConfig = new SimpleConfiguration(credentialsConfigMap);
@@ -86,7 +91,7 @@ public class EC2ProviderTest {
 
       // Create provider
       EC2Provider ec2Provider = new EC2Provider(new SimpleConfiguration(providerConfigMap),
-          ephemeralDeviceMappings, new AmazonEC2Client(providerChain),
+          ephemeralDeviceMappings, virtualizationMappings, new AmazonEC2Client(providerChain),
           new AmazonIdentityManagementClient(providerChain), DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure instance template
@@ -125,8 +130,7 @@ public class EC2ProviderTest {
             instanceTemplate,
             virtualInstanceIds,
             EnumSet.of(InstanceStatus.RUNNING),
-            EnumSet.of(InstanceStatus.DELETED, InstanceStatus.FAILED, InstanceStatus.STOPPED,
-                InstanceStatus.UNKNOWN)
+            EnumSet.of(InstanceStatus.DELETED, InstanceStatus.FAILED, InstanceStatus.STOPPED)
         );
 
         for (Map.Entry<String, InstanceState> entry : instanceStates.entrySet()) {
@@ -151,8 +155,8 @@ public class EC2ProviderTest {
           ec2Provider,
           instanceTemplate,
           virtualInstanceIds,
-          EnumSet.of(InstanceStatus.DELETED),
-          EnumSet.of(InstanceStatus.FAILED, InstanceStatus.STOPPED, InstanceStatus.UNKNOWN)
+          EnumSet.of(InstanceStatus.DELETED, InstanceStatus.UNKNOWN),
+          EnumSet.of(InstanceStatus.FAILED, InstanceStatus.STOPPED)
       );
 
       for (Map.Entry<String, InstanceState> entry : instanceStates.entrySet()) {

@@ -170,7 +170,7 @@ public class AWSLauncher extends AbstractLauncher {
     if (!AWSProvider.METADATA.getId().equals(cloudProviderId)) {
       throw new IllegalArgumentException("Invalid cloud provider: " + cloudProviderId);
     }
-    return new AWSProvider(configuration, ephemeralDeviceMappings, awsClientConfig,
+    return new AWSProvider(configuration, ephemeralDeviceMappings, virtualizationMappings, awsClientConfig,
         getLocalizationContext(locale));
   }
 

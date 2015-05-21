@@ -26,6 +26,9 @@
     <version>1.0.0-SNAPSHOT</version>
 
     <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+
         <launcher-class>com.cloudera.director.aws.AWSLauncher</launcher-class>
         <assertj.version>1.6.0</assertj.version>
         <aws-java-sdk.version>1.9.33</aws-java-sdk.version>
@@ -35,6 +38,7 @@
         <jsr305.version>2.0.2</jsr305.version>
         <mockito.version>1.10.19</mockito.version>
         <slf4j.version>1.7.5</slf4j.version>
+        <logback.version>1.1.2</logback.version>
         <spring.version>4.1.5.RELEASE</spring.version>
         <typesafe-config.version>1.2.0</typesafe-config.version>
         <shade-prefix>com.cloudera.director.aws.shaded</shade-prefix>
@@ -121,6 +125,12 @@
             <artifactId>jcl-over-slf4j</artifactId>
             <version>${slf4j.version}</version>
             <scope>runtime</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>ch.qos.logback</groupId>
+            <artifactId>logback-classic</artifactId>
+            <version>${logback.version}</version>
         </dependency>
 
         <dependency>
@@ -234,6 +244,10 @@
                             <pattern>org.slf4j</pattern>
                             <shadedPattern>${shade-prefix}.org.slf4j</shadedPattern>
                         </relocation>
+                        <relocation>
+                            <pattern>ch.qos.logback</pattern>
+                            <shadedPattern>${shade-prefix}.ch.qos.logback</shadedPattern>
+                        </relocation>
                     </relocations>
                     <transformers>
                         <transformer
@@ -248,19 +262,6 @@
                         </goals>
                     </execution>
                 </executions>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-jar-plugin</artifactId>
-                <configuration>
-                    <archive>
-                        <manifestEntries>
-                            <Cloudera-Director-SPI-Version>v1</Cloudera-Director-SPI-Version>
-                            <Cloudera-Director-Launcher-Class>${launcher-class}</Cloudera-Director-Launcher-Class>
-                        </manifestEntries>
-                    </archive>
-                </configuration>
             </plugin>
 
             <plugin>

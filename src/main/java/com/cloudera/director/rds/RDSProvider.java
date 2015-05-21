@@ -14,6 +14,7 @@
 
 package com.cloudera.director.rds;
 
+import static com.cloudera.director.rds.RDSEngines.ENGINES;
 import static com.cloudera.director.rds.RDSProvider.RDSProviderConfigurationPropertyToken.REGION;
 import static com.cloudera.director.rds.RDSProvider.RDSProviderConfigurationPropertyToken.REGION_ENDPOINT;
 import static com.google.common.base.Preconditions.checkNotNull;
@@ -31,17 +32,17 @@ import com.cloudera.director.InstanceTags;
 import com.cloudera.director.Tags;
 import com.cloudera.director.ec2.EC2Provider;
 import com.cloudera.director.spi.v1.database.DatabaseServerProviderMetadata;
-import com.cloudera.director.spi.v1.database.DatabaseType;
 import com.cloudera.director.spi.v1.database.util.AbstractDatabaseServerProvider;
 import com.cloudera.director.spi.v1.database.util.SimpleDatabaseServerProviderMetadata;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
+import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.Resource;
+import com.cloudera.director.spi.v1.model.util.CompositeConfigurationValidator;
 import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
 import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
@@ -55,15 +56,10 @@ import org.slf4j.LoggerFactory;
 /**
  * Database server provider of Amazon RDS instances.
  */
+@SuppressWarnings("PMD.TooManyStaticImports")
 public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDSInstanceTemplate> {
 
   private static final Logger LOG = LoggerFactory.getLogger(RDSProvider.class);
-
-  /**
-   * Map from supported database types to RDS-specific engine names.
-   */
-  private static final Map<DatabaseType, String> ENGINES =
-      ImmutableMap.of(DatabaseType.MYSQL, "MYSQL");
 
   /**
    * The provider configuration properties.
@@ -126,7 +122,6 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
         .name("RDS region")
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .defaultDescription("The RDS region.")
-        .defaultValue("us-east-1")
         .addValidValues(
             "ap-northeast-1",
             "ap-southeast-1",
@@ -170,24 +165,13 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
     }
   }
 
-  /**
-   * Returns the engine for the specified database type.
-   *
-   * @param databaseType the database type
-   * @return the engine for the specified database type
-   */
-  protected static String getEngine(DatabaseType databaseType) {
-    if (!ENGINES.containsKey(databaseType)) {
-      throw new IllegalArgumentException("Unsupported database type " + databaseType);
-    }
-    return ENGINES.get(databaseType);
-  }
-
   private final AmazonRDSClient client;
   @SuppressWarnings("PMD.UnusedPrivateField")
   private final AmazonIdentityManagementClient identityManagementClient;
 
   private final boolean associatePublicIpAddresses;
+
+  private final ConfigurationValidator resourceTemplateConfigurationValidator;
 
   /**
    * Construct a new provider instance and validate all configurations.
@@ -223,6 +207,24 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
     this.associatePublicIpAddresses = Boolean.parseBoolean(
         getConfigurationValue(RDSProviderConfigurationPropertyToken.ASSOCIATE_PUBLIC_IP_ADDRESSES,
             localizationContext));
+
+    this.resourceTemplateConfigurationValidator =
+        new CompositeConfigurationValidator(METADATA.getResourceTemplateConfigurationValidator(),
+            new RDSInstanceTemplateConfigurationValidator(this));
+  }
+
+  /**
+   * Returns the RDS client.
+   *
+   * @return the RDS client
+   */
+  public AmazonRDSClient getClient() {
+    return client;
+  }
+
+  @Override
+  public ConfigurationValidator getResourceTemplateConfigurationValidator() {
+    return resourceTemplateConfigurationValidator;
   }
 
   @Override
@@ -277,13 +279,17 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
     for (String virtualInstanceId : virtualInstanceIds) {
       LOG.info(">> Terminating {}", virtualInstanceId);
 
-      String snapshotIdentifier = String.format("%s-director-final-snapshot-%d", virtualInstanceId,
-          System.currentTimeMillis());
+      DeleteDBInstanceRequest request = new DeleteDBInstanceRequest()
+          .withDBInstanceIdentifier(virtualInstanceId);
+      if (template.isSkipFinalSnapshot().or(false)) {
+        request.setSkipFinalSnapshot(true);
+      } else {
+        String snapshotIdentifier = String.format("%s-director-final-snapshot-%d",
+                                                  virtualInstanceId, System.currentTimeMillis());
+        request.setFinalDBSnapshotIdentifier(snapshotIdentifier);
+      }
 
-      DBInstance deletedDbInstance = client.deleteDBInstance(
-          new DeleteDBInstanceRequest()
-              .withDBInstanceIdentifier(virtualInstanceId)
-              .withFinalDBSnapshotIdentifier(snapshotIdentifier));
+      DBInstance deletedDbInstance = client.deleteDBInstance(request);
 
       LOG.info("<< Result {}", deletedDbInstance);
     }
@@ -337,7 +343,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
         .withVpcSecurityGroupIds(template.getVpcSecurityGroupIds())
         .withPubliclyAccessible(associatePublicIpAddresses)
         .withAllocatedStorage(template.getAllocatedStorage())
-        .withEngine(getEngine(template.getDatabaseType()))
+        .withEngine(RDSEngines.getEngine(template.getDatabaseType()))
         .withMasterUsername(template.getAdminUser())
         .withMasterUserPassword(template.getAdminPassword())  // masterPassword in AWS SDK 1.9+
         .withTags(convertToTags(template.getTags(), template, virtualInstanceId));
