@@ -273,7 +273,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         DescribeAvailabilityZonesResult result = client.describeAvailabilityZones(
             new DescribeAvailabilityZonesRequest().withZoneNames(zoneName));
 
-        checkCount(accumulator, AVAILABILITY_ZONE, localizationContext, "Availablility zone",
+        checkCount(accumulator, AVAILABILITY_ZONE, localizationContext, "Availability zone",
             result.getAvailabilityZones());
       } catch (AmazonServiceException e) {
         if (e.getErrorCode().equals(INVALID_PARAMETER_VALUE) &&
