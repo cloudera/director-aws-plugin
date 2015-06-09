@@ -1,0 +1,4 @@
+com.cloudera.director.aws
+com.cloudera.director.aws.common
+com.cloudera.director.aws.ec2
+com.cloudera.director.aws.rds
