@@ -82,6 +82,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.collect.BiMap;
+import com.google.common.collect.FluentIterable;
 import com.google.common.collect.HashBiMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -442,7 +443,15 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     final Set<String> instancesWithNoPrivateIp = Sets.newHashSet();
 
     List<Instance> instances = runInstancesResult.getReservation().getInstances();
-    for (Map.Entry<String, Instance> entry : zipWith(virtualInstanceIds, instances)) {
+
+    // Limit the number of virtual instance id's used for tagging to the
+    // number of instances that we managed to reserve.
+    List<String> reducedVirtualInstanceIds = FluentIterable
+      .from(virtualInstanceIds)
+      .limit(instances.size())
+      .toList();
+
+    for (Map.Entry<String, Instance> entry : zipWith(reducedVirtualInstanceIds, instances)) {
 
       String virtualInstanceId = entry.getKey();
       Instance instance = entry.getValue();
