@@ -1,4 +1,3 @@
-<?xml version="1.0" encoding="UTF-8"?>
 <!--
   ~ Copyright (c) 2015 Cloudera, Inc.
   ~
@@ -15,19 +14,10 @@
   ~ limitations under the License.
   -->
 
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-
-    <groupId>com.cloudera.director</groupId>
-    <artifactId>aws</artifactId>
-    <name>Cloudera Director :: Plugins :: AWS</name>
-    <version>1.1.0</version>
-    <packaging>pom</packaging>
-
-    <modules>
-        <module>provider</module>
-        <module>tests</module>
-    </modules>
-</project>
+<FindBugsFilter>
+    <Match>
+        <Class name="com.cloudera.director.aws.AWSLauncher" />
+        <Field name="virtualizationMappings" />
+        <Bug code="UrF" />
+    </Match>
+</FindBugsFilter>
