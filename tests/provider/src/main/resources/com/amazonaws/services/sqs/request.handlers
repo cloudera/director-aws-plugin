@@ -1,3 +1,0 @@
-com.cloudera.director.aws.shaded.com.amazonaws.services.sqs.QueueUrlHandler
-com.cloudera.director.aws.shaded.com.amazonaws.services.sqs.internal.SQSRequestHandler
-com.cloudera.director.aws.shaded.com.amazonaws.services.sqs.MessageMD5ChecksumHandler
