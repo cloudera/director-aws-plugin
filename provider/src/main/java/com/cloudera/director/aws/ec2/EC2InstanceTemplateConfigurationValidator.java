@@ -25,6 +25,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 
@@ -94,6 +95,9 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   static final Set<String> ROOT_VOLUME_TYPES = ImmutableSet.of("gp2", "standard");
 
   @VisibleForTesting
+  static final Set<String> TENANCY_TYPES = ImmutableSet.of("default", "dedicated");
+
+  @VisibleForTesting
   static final String INVALID_AMI_NAME_MSG = "AMI ID does not start with ami-: %s";
   private static final String INVALID_AMI_ID = "InvalidAMIID";
   @VisibleForTesting
@@ -144,6 +148,9 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   private static final String INVALID_PLACEMENT_GROUP_ID = "InvalidPlacementGroup";
   @VisibleForTesting
   static final String INVALID_PLACEMENT_GROUP_MSG = "Invalid placement group: %s";
+
+  @VisibleForTesting
+  static final String INVALID_TENANCY_MSG = "Invalid tenancy type: %s. Available options: %s";
 
   @VisibleForTesting
   static final String INVALID_IAM_PROFILE_NAME_MSG = "Invalid IAM instance profile name: %s";
@@ -218,6 +225,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     checkSecurityGroupIds(ec2Client, configuration, accumulator, localizationContext);
     checkAvailabilityZone(ec2Client, configuration, accumulator, localizationContext);
     checkPlacementGroup(ec2Client, configuration, accumulator, localizationContext);
+    checkTenancy(configuration, accumulator, localizationContext);
     checkIamProfileName(configuration, accumulator, localizationContext);
     checkRootVolumeSize(configuration, accumulator, localizationContext);
     checkRootVolumeType(configuration, accumulator, localizationContext);
@@ -406,6 +414,27 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
           throw Throwables.propagate(e);
         }
       }
+    }
+  }
+  /**
+   * Validates the configured tenancy type.
+   *
+   * @param configuration       the configuration to be validated
+   * @param accumulator         the exception condition accumulator
+   * @param localizationContext the localization context
+   */
+  @VisibleForTesting
+  void checkTenancy(Configured configuration,
+                           PluginExceptionConditionAccumulator accumulator,
+                           LocalizationContext localizationContext) {
+
+    String tenancy =
+            configuration.getConfigurationValue(TENANCY, localizationContext);
+
+    if (!TENANCY_TYPES.contains(tenancy)) {
+      addError(accumulator, TENANCY, localizationContext,
+              null, INVALID_TENANCY_MSG,
+              tenancy, Joiner.on(", ").join(TENANCY_TYPES));
     }
   }
 

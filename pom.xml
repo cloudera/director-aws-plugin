@@ -23,7 +23,7 @@
     <groupId>com.cloudera.director</groupId>
     <artifactId>aws</artifactId>
     <name>Cloudera Director :: Plugins :: AWS</name>
-    <version>1.1.0</version>
+    <version>1.2.0</version>
     <packaging>pom</packaging>
 
     <modules>

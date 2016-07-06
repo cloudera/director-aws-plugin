@@ -15,9 +15,9 @@
 package com.cloudera.director.aws;
 
 /**
- * Constants for important properties and sections in the configuration file
+ * Constants for important properties and sections in the configuration file.
  *
- * @see <a href="https://github.com/typesafehub/config" />
+ * @see <a href="https://github.com/typesafehub/config">Typesafe Config</a>
  */
 public final class Configurations {
 

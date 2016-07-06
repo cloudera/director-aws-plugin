@@ -103,7 +103,7 @@ public class AWSCredentialsProviderChainProvider
        * An alphanumeric text string that uniquely identifies the user who
        * owns the account. No two accounts can have the same AWS Access Key.
        *
-       * @see <a href="http://docs.aws.amazon.com/general/latest/gr/aws-security-credentials.html" />
+       * @see <a href="http://docs.aws.amazon.com/general/latest/gr/aws-security-credentials.html">AWS Security Credentials</a>
        */
       ACCESS_KEY_ID(new SimpleConfigurationPropertyBuilder()
           .configKey("accessKeyId")
@@ -118,7 +118,7 @@ public class AWSCredentialsProviderChainProvider
        * This key plays the role of a  password. Together with the access key
        * this forms a secure pair that confirms the user's identity
        *
-       * @see <a href="http://docs.aws.amazon.com/general/latest/gr/aws-security-credentials.html" />
+       * @see <a href="http://docs.aws.amazon.com/general/latest/gr/aws-security-credentials.html">AWS Security Credentials</a>
        */
       SECRET_ACCESS_KEY(new SimpleConfigurationPropertyBuilder()
           .configKey("secretAccessKey")
@@ -132,8 +132,8 @@ public class AWSCredentialsProviderChainProvider
       /**
        * The token that users must pass to the service API to use the temporary credentials.
        *
-       * @see <a href="http://docs.aws.amazon.com/STS/latest/APIReference/API_Credentials.html" />
-       * @see <a href="http://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html" />
+       * @see <a href="http://docs.aws.amazon.com/STS/latest/APIReference/API_Credentials.html">API Credentials</a>
+       * @see <a href="http://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html">API AssumeRole</a>
        */
       SESSION_TOKEN(new SimpleConfigurationPropertyBuilder()
           .configKey("sessionToken")

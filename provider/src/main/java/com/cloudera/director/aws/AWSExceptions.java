@@ -10,8 +10,8 @@ import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderExcepti
 
 /**
  * Provides utilities for dealing with AWS exceptions.
- * <p/>
- * {@link <a href="http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html" />}
+ *
+ * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html">AWS Errors</a>
  */
 public class AWSExceptions {
 

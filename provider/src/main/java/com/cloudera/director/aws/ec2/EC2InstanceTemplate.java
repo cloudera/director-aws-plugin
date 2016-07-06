@@ -24,6 +24,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SECURITY_GROUP_IDS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 
@@ -81,11 +82,10 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
 
     /**
      * <p>The availability zone.</p>
-     * <p/>
      * <p>Multiple availability zones are linked together by high speed low latency connections.
      * Each zone is a distinct failure domain.</p>
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html">Regions and Availability Zones</a>
      */
     AVAILABILITY_ZONE(new SimpleConfigurationPropertyBuilder()
         .configKey("availabilityZone")
@@ -98,7 +98,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * Name of the IAM instance profile.
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html">IAM Roles</a>
      */
     IAM_PROFILE_NAME(new SimpleConfigurationPropertyBuilder()
         .configKey("iamProfileName")
@@ -130,7 +130,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * Name of the key pair to use for new instances.
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-key-pairs.html">EC2 Key Pairs</a>
      */
     KEY_NAME(new SimpleConfigurationPropertyBuilder()
         .configKey("keyName")
@@ -146,7 +146,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * The placement group name for new instances.
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html">Placement Groups</a>
      */
     PLACEMENT_GROUP(new SimpleConfigurationPropertyBuilder()
         .configKey("placementGroup")
@@ -176,7 +176,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * The type of EBS volume to use for the root drive.
      *
-     * @see <a href="http://aws.amazon.com/ebs/details/" />
+     * @see <a href="http://aws.amazon.com/ebs/details/">EBS</a>
      */
     ROOT_VOLUME_TYPE(new SimpleConfigurationPropertyBuilder()
         .configKey("rootVolumeType")
@@ -194,7 +194,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * The IDs of the VPC security groups (comma separated).
      *
-     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_SecurityGroups.html" />
+     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_SecurityGroups.html">Security Groups</a>
      */
     SECURITY_GROUP_IDS(new SimpleConfigurationPropertyBuilder()
         .configKey("securityGroupsIds")
@@ -229,7 +229,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * The ID of the Amazon VPC subnet.
      *
-     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_Subnets.html" />
+     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_Subnets.html">Subnets</a>
      */
     SUBNET_ID(new SimpleConfigurationPropertyBuilder()
         .configKey("subnetId")
@@ -240,6 +240,27 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
           "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_Subnets.html'>More Information</a>"
         ).defaultErrorMessage("VPC subnet ID is mandatory")
         .build()),
+
+    /**
+     * <p>The tenancy.</p>
+     * <p>The tenancy of the instance (if the instance is running in a VPC).
+     * An instance with dedicated tenancy runs on single-tenant hardware.</p>
+     *
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/how-dedicated-hosts-work.html">Using Dedicated Hosts</a>
+     */
+    TENANCY(new SimpleConfigurationPropertyBuilder()
+            .configKey("tenancy")
+            .name("Tenancy")
+            .defaultValue("default")
+            .widget(ConfigurationProperty.Widget.LIST)
+            .defaultDescription(
+              "Instance tenancy should be defined here. This setting allows users to launch the desired instance in VPC with a defined tenancy. <br/>" +
+              "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/dedicated-instance.html'>More information</a>"
+            ).addValidValues(
+              "default",
+              "dedicated"
+            )
+            .build()),
 
     /**
      * The instance type (e.g. t1.micro, m1.medium, etc.).
@@ -297,7 +318,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     /**
      * Whether to use Spot Instances. Default is <code>false</code>.
      *
-     * @see <a href="http://aws.amazon.com/ec2/spot/" />
+     * @see <a href="http://aws.amazon.com/ec2/spot/">Spot Instances</a>
      */
     USE_SPOT_INSTANCES(new SimpleConfigurationPropertyBuilder()
         .configKey("useSpotInstances")
@@ -351,6 +372,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    * The placement group.
    */
   private final Optional<String> placementGroup;
+
+  /**
+   * The tenancy.
+   */
+  private final String tenancy;
 
   /**
    * The subnet ID.
@@ -415,6 +441,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         Optional.fromNullable(getConfigurationValue(AVAILABILITY_ZONE, localizationContext));
     this.placementGroup =
         Optional.fromNullable(getConfigurationValue(PLACEMENT_GROUP, localizationContext));
+    this.tenancy = getConfigurationValue(TENANCY, localizationContext);
 
     this.rootVolumeSizeGB =
         Integer.parseInt(getConfigurationValue(ROOT_VOLUME_SIZE_GB, localizationContext));
@@ -471,10 +498,17 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   }
 
   /**
-   * Returns the subnet ID.
+   * Returns tenancy.
    *
-   * @return the subnet ID
+   * @return tenancy
    */
+  public String getTenancy() { return tenancy; }
+
+    /**
+     * Returns the subnet ID.
+     *
+     * @return the subnet ID
+     */
   public String getSubnetId() {
     return subnetId;
   }

@@ -54,8 +54,8 @@ import org.springframework.core.env.PropertyResolver;
  * This class looks up mappings using a built-in list and an override list that
  * the user can easily modify.
  *
- * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/InstanceStorage.html" />
- * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html" />
+ * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/InstanceStorage.html">Amazon EC2 Instance Stor</a>
+ * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html">Block Device Mapping</a>
  */
 @SuppressWarnings("PMD.TooManyStaticImports")
 public class EphemeralDeviceMappings implements Function<String, List<BlockDeviceMapping>> {
@@ -125,7 +125,7 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
 
     /**
      * Ephemeral drives should be attached in the following range:
-     * /dev/(sd|xvd)[b-y]
+     * /dev/(sd|xvd)[b-y].
      */
     public static final char DEFAULT_RANGE_START_FOR_EPHEMERAL_DRIVES = 'b';
 
@@ -292,7 +292,7 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
    *
    * @param instanceType EC2 instance type
    * @return list of block device mappings
-   * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html" />
+   * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html">Block Device Mapping</a>
    */
   @Nonnull
   public List<BlockDeviceMapping> apply(String instanceType) {

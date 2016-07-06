@@ -86,7 +86,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
   public static final DatabaseServerProviderMetadata METADATA =
       SimpleDatabaseServerProviderMetadata.databaseServerProviderMetadataBuilder()
           .id(ID)
-          .name("RDS (Relation Database Service)")
+          .name("RDS (Relational Database Service)")
           .description("AWS RDS database server provider")
           .providerClass(RDSProvider.class)
           .providerConfigurationProperties(CONFIGURATION_PROPERTIES)
@@ -98,7 +98,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
   /**
    * RDS configuration properties.
    *
-   * @see <a href="http://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/rds/model/CreateDBInstanceRequest.html" />
+   * @see <a href="http://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/services/rds/model/CreateDBInstanceRequest.html">CreateDBInstanceRequest</a>
    */
   // Fully qualifying class name due to compiler bug
   public static enum RDSProviderConfigurationPropertyToken
@@ -108,7 +108,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
      * Whether to associate a public IP address with instances. Default is <code>false</code>,
      * which differs from the RDS default.
      *
-     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-ip-addressing.html" />
+     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-ip-addressing.html">IP Addressing in your VPC</a>
      */
     ASSOCIATE_PUBLIC_IP_ADDRESSES(new SimpleConfigurationPropertyBuilder()
         .configKey("rdsAssociatePublicIpAddresses")
@@ -126,7 +126,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
      * isolated locations known as Availability Zones. Default is {@code null}, so we can fall back
      * to the EC2 region.
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html">Regions and Availability Zones</a>
      */
     REGION(new SimpleConfigurationPropertyBuilder()
         .configKey("rdsRegion")
@@ -135,6 +135,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
         .defaultDescription("The RDS region (defaults to configured EC2 region).")
         .addValidValues(
             "ap-northeast-1",
+            "ap-northeast-2",
             "ap-southeast-1",
             "ap-southeast-2",
             "eu-central-1",
@@ -147,7 +148,6 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
 
     /**
      * <p>Custom endpoint identifying a region.</p>
-     * <p/>
      * <p>This is critical for Gov. cloud because there is no other way to discover those
      * regions.</p>
      */

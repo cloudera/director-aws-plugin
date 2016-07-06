@@ -43,7 +43,7 @@ public class AWSClientConfig {
   /**
    * AWS client configuration properties.
    *
-   * @link <a href="http://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/ClientConfiguration.html" />
+   * @see <a href="http://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/ClientConfiguration.html">ClientConfiguration</a>
    */
   // Fully qualifying class name due to compiler bug
   public static enum AWSClientConfigurationPropertyToken

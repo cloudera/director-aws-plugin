@@ -156,7 +156,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    */
   public static final ResourceProviderMetadata METADATA = SimpleResourceProviderMetadata.builder()
       .id(ID)
-      .name("EC2 (Elastic Cloud Compute)")
+      .name("EC2 (Elastic Compute Cloud)")
       .description("AWS EC2 compute provider")
       .providerClass(EC2Provider.class)
       .providerConfigurationProperties(CONFIGURATION_PROPERTIES)
@@ -185,7 +185,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     /**
      * Whether to associate a public IP address with instances. Default is <code>true</code>.
      *
-     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-ip-addressing.html" />
+     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-ip-addressing.html">IP Addressing in your VPC</a>
      */
     ASSOCIATE_PUBLIC_IP_ADDRESSES(new SimpleConfigurationPropertyBuilder()
         .configKey("associatePublicIpAddresses")
@@ -209,7 +209,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
      * EC2 region. Each region is a separate geographic area. Each region has multiple, isolated
      * locations known as Availability Zones. Default is us-east-1.
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html">Regions and Availability Zones</a>
      */
     REGION(new SimpleConfigurationPropertyBuilder()
         .configKey("region")
@@ -219,6 +219,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .addValidValues(
             "ap-northeast-1",
+            "ap-northeast-2",
             "ap-southeast-1",
             "ap-southeast-2",
             "eu-central-1",
@@ -231,7 +232,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     /**
      * <p>Custom endpoint identifying a region.</p>
-     * <p/>
      * <p>This is critical for Gov. cloud because there is no other way to discover those
      * regions.</p>
      */
@@ -744,7 +744,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       }
     }
 
-    if (!LOG.isInfoEnabled()) {
+    if (LOG.isInfoEnabled()) {
       LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
           summarizeReservationForLogging(runInstancesResult.getReservation()));
     }
@@ -789,7 +789,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * single instance template. If not all the instances can be allocated, the number of instances
    * allocated must be at least the specified minimum or the method must fail cleanly with no
    * billing implications.</p>
-   * <p/>
    * <p><em>Note:</em> contrary to the contract of the SPI method, there are some cases where
    * despite failing to satisfy the min count there are billing implications, due to non-atomicity
    * of AWS operations. In particular, if we lose connectivity to AWS for an extended period of time
@@ -932,7 +931,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   }
 
   /**
-   * Build a {@code RunInstancesRequest} starting from a template and a set of virtual IDs
+   * Builds a {@code RunInstancesRequest} starting from a template and a set of
+   * virtual IDs.
    *
    * @param template           the instance template
    * @param virtualInstanceIds the virtual instance IDs
@@ -941,16 +941,23 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private RunInstancesRequest newRunInstancesRequest(EC2InstanceTemplate template,
       Collection<String> virtualInstanceIds, int minCount) {
 
+    LOG.info(">> Building instance requests");
+
     int groupSize = virtualInstanceIds.size();
+    String image = template.getImage();
+    String type = template.getType();
 
     InstanceNetworkInterfaceSpecification network =
         getInstanceNetworkInterfaceSpecification(template);
 
     List<BlockDeviceMapping> deviceMappings = getBlockDeviceMappings(template);
 
+    LOG.info(">> Instance request type: {}, image: {}, group size: {}",
+      type, image, groupSize);
+
     RunInstancesRequest request = new RunInstancesRequest()
-        .withImageId(template.getImage())
-        .withInstanceType(template.getType())
+        .withImageId(image)
+        .withInstanceType(type)
         .withMaxCount(groupSize)
         .withMinCount(minCount)
         .withClientToken(getHashOfVirtualInstanceIdsForClientToken(
@@ -976,6 +983,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
           new Placement().withGroupName(template.getPlacementGroup().get())
           : placement.withGroupName(template.getPlacementGroup().get());
     }
+    placement = (placement == null) ?
+      new Placement().withTenancy(template.getTenancy())
+      : placement.withTenancy(template.getTenancy());
+
     request.withPlacement(placement);
 
     return request;
@@ -1047,7 +1058,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
   /**
    * <p>Zip two collections as a lazy iterable of pairs.</p>
-   * <p/>
    * <p><em>Note:</em> the returned iterable is not suitable for repeated use, since it
    * exhausts the iterator over the first collection.</p>
    *
@@ -1181,7 +1191,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * Combines all the virtual instance IDs together in a single token than
    * can be used to make sure we can safely retry any runInstances() call.
    *
-   * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Run_Instance_Idempotency.html" />
+   * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Run_Instance_Idempotency.html">Ensuring Idempotency</a>
    */
   private String getHashOfVirtualInstanceIdsForClientToken(Collection<String> virtualInstanceIds,
       Optional<Long> discriminator) {
@@ -1514,9 +1524,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     /**
      * <p>Identifies reusable Spot instances orphaned by a previous call.</p>
-     * <p/>
      * <p><em>Note:</em> because of AWS's eventual consistency policies, we are not guaranteed
      * to be able to detect all orphans here, but we make a best-faith effort.</p>
+     *
+     * @throws InterruptedException if operation is interrupted
      */
     @VisibleForTesting
     protected void checkForOrphanedInstances()
@@ -1646,6 +1657,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
       LOG.info(">> Building Spot instance requests");
       int groupSize = virtualInstanceIds.size();
+      String image = template.getImage();
+      String type = template.getType();
 
       InstanceNetworkInterfaceSpecification network =
           getInstanceNetworkInterfaceSpecification(template);
@@ -1653,8 +1666,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       List<BlockDeviceMapping> deviceMappings = getBlockDeviceMappings(template);
 
       LaunchSpecification launchSpecification = new LaunchSpecification()
-          .withImageId(template.getImage())
-          .withInstanceType(template.getType())
+          .withImageId(image)
+          .withInstanceType(type)
           .withNetworkInterfaces(network)
           .withBlockDeviceMappings(deviceMappings);
 
@@ -1677,6 +1690,9 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             : placement.withGroupName(template.getPlacementGroup().get());
       }
       launchSpecification.withPlacement(placement);
+
+      LOG.info(">> Spot instance request type: {}, image: {}, group size: {}",
+        type, image, groupSize);
 
       return new RequestSpotInstancesRequest()
           .withSpotPrice(template.getSpotBidUSDPerHour().get().toString())
@@ -1965,6 +1981,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
      * Terminates any running Spot instances (includes discovered orphans and allocated instances).
      *
      * @param accumulator the exception condition accumulator
+     * @throws InterruptedException if operation is interrupted
      */
     @VisibleForTesting
     protected void terminateSpotInstances(PluginExceptionConditionAccumulator accumulator)

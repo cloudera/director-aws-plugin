@@ -31,7 +31,7 @@ import java.util.NoSuchElementException;
 import java.util.logging.Logger;
 
 /**
- * Wrap a HOCON config fragment object as an SPI configured object
+ * Wraps a HOCON config fragment object as an SPI configured object.
  *
  * @see com.typesafe.config.Config
  * @see com.cloudera.director.spi.v1.model.Configured
@@ -42,7 +42,7 @@ public class ConfigFragmentWrapper implements Configured {
   private final List<ConfigurationProperty> properties;
 
   /**
-   * Construct a new wrapper around a config instance.
+   * Constructs a new wrapper around a config instance.
    *
    * @param config     fragment of a config object
    * @param components properties that should be exposed
@@ -54,7 +54,7 @@ public class ConfigFragmentWrapper implements Configured {
   }
 
   /**
-   * Build a map with all the configuration properties. Mandatory missing
+   * Builds a map with all the configuration properties. Mandatory missing
    * properties are just ignored and the result is immutable.
    *
    * @param localizationContext the localization context
@@ -76,7 +76,7 @@ public class ConfigFragmentWrapper implements Configured {
   }
 
   /**
-   * Get the value of a configuration property from the underlying config object.
+   * Gets the value of a configuration property from the underlying config object.
    *
    * @param token               a description for a configuration property
    * @param localizationContext the localization context
@@ -89,7 +89,7 @@ public class ConfigFragmentWrapper implements Configured {
   }
 
   /**
-   * Get the value of a configuration property from the underlying config object.
+   * Gets the value of a configuration property from the underlying config object.
    *
    * @param property            a description for a configuration property
    * @param localizationContext the localization context
@@ -111,7 +111,7 @@ public class ConfigFragmentWrapper implements Configured {
   }
 
   /**
-   * Dump all the properties as multiple log lines for debugging.
+   * Dumps all the properties as multiple log lines for debugging.
    *
    * @param description         the meaning of this set of properties
    * @param logger              a logger used as output

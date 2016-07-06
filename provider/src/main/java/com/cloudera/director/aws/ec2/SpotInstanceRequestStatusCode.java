@@ -13,8 +13,7 @@ import org.slf4j.LoggerFactory;
 /**
  * EC2 Spot instance request status codes.
  *
- * @see <a href=
- * "http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-bid-status.html#spot-instance-bid-status-understand" />
+ * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-bid-status.html#spot-instance-bid-status-understand">Spot Bid Status Codes</a>
  */
 public enum SpotInstanceRequestStatusCode {
 

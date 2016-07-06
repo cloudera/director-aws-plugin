@@ -23,7 +23,7 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>aws</artifactId>
-        <version>1.1.0</version>
+        <version>1.2.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -48,7 +48,7 @@
         <typesafe-config.version>1.2.0</typesafe-config.version>
         <shade-prefix>com.cloudera.director.aws.shaded</shade-prefix>
         <maven-checkstyle-plugin.version>2.13</maven-checkstyle-plugin.version>
-        <maven-findbugs-plugin.version>2.5.5</maven-findbugs-plugin.version>
+        <findbugs-maven-plugin.version>3.0.3</findbugs-maven-plugin.version>
     </properties>
 
     <dependencies>
@@ -228,7 +228,7 @@
             <plugin>
                 <groupId>org.codehaus.mojo</groupId>
                 <artifactId>findbugs-maven-plugin</artifactId>
-                <version>${maven-findbugs-plugin.version}</version>
+                <version>${findbugs-maven-plugin.version}</version>
                 <configuration>
                     <excludeFilterFile>findbugs-exclude.xml</excludeFilterFile>
                     <failOnError>false</failOnError>

@@ -122,11 +122,10 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
 
     /**
      * <p>The availability zone.</p>
-     * <p/>
      * <p>Multiple availability zones are linked together by high speed low latency connections.
      * Each zone is a distinct failure domain.</p>
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html" />
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html">Regions and Availability Zones</a>
      */
     AVAILABILITY_ZONE(new SimpleConfigurationPropertyBuilder()
         .configKey("availabilityZone")

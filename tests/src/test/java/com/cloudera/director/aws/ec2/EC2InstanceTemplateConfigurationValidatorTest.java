@@ -25,6 +25,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.HVM_VIRTUALIZATION;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.IMAGE_OWNER_ID_BLACKLIST_KEY;
@@ -443,6 +444,27 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
   }
 
   @Test
+  public void testCheckTenancy_Default() {
+    String tenancy = "default";
+    checkTenancy(tenancy);
+    verifyClean();
+  }
+
+  @Test
+  public void testCheckTenancy_Dedicated() {
+    String tenancy = "dedicated";
+    checkTenancy(tenancy);
+    verifyClean();
+  }
+
+  @Test
+  public void testCheckTenancy_Invalid() {
+    String tenancy = "some-invalid-tenancy";
+    checkTenancy(tenancy);
+    verifySingleError(TENANCY);
+  }
+
+  @Test
   public void testCheckIamProfileName() {
     AmazonIdentityManagementClient iamClient = mock(AmazonIdentityManagementClient.class);
     GetInstanceProfileResult gipResult = mock(GetInstanceProfileResult.class);
@@ -703,6 +725,18 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     configMap.put(PLACEMENT_GROUP.unwrap().getConfigKey(), placementGroup);
     Configured configuration = new SimpleConfiguration(configMap);
     validator.checkPlacementGroup(ec2Client, configuration, accumulator, localizationContext);
+  }
+
+  /**
+   * Invokes checkTenancy with the specified configuration.
+   *
+   * @param tenancy tenancy for the instance
+   */
+  protected void checkTenancy(String tenancy) {
+    Map<String, String> configMap = Maps.newHashMap();
+    configMap.put(TENANCY.unwrap().getConfigKey(), tenancy);
+    Configured configuration = new SimpleConfiguration(configMap);
+    validator.checkTenancy(configuration, accumulator, localizationContext);
   }
 
   /**

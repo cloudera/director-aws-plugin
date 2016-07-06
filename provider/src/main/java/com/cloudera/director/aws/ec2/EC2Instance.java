@@ -426,6 +426,21 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
     },
 
     /**
+     * The tenancy type of the instance.
+     */
+    TENANCY(new SimpleDisplayPropertyBuilder()
+      .displayKey("tenancy")
+      .name("Tenancy")
+      .defaultDescription("Tenancy of the instance.")
+      .sensitive(false)
+      .build()) {
+      @Override
+      protected String getPropertyValue(Instance instance) {
+        return instance.getPlacement().getTenancy();
+      }
+    },
+
+    /**
      * The virtualization type of the instance.
      */
     VIRTUALIZATION_TYPE(new SimpleDisplayPropertyBuilder()
