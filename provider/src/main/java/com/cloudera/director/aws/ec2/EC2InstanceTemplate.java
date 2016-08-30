@@ -154,7 +154,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .defaultDescription("The placement group name should be defined here. " +
           "This setting allows users to launch the desired instance in a defined placement group. " +
           "Instances using placement groups will deploy in a specific zone within a region which helps network performance. <br/>" +
-          "<a target='_blank' href='with: http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html'>More information</a>")
+          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html'>More information</a>")
         .build()),
 
     /**
