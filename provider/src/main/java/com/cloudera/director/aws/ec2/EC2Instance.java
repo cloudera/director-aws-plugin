@@ -316,7 +316,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
       @Override
       protected String getPropertyValue(Instance instance) {
         Boolean sourceDestCheck = instance.getSourceDestCheck();
-        return Boolean.toString(sourceDestCheck == null ? false : sourceDestCheck);
+        return Boolean.toString(sourceDestCheck != null && sourceDestCheck);
       }
     },
 

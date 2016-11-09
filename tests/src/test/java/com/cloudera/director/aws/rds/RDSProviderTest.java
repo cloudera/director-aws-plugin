@@ -20,6 +20,7 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.DB_SUBNET_GROUP_NAME;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.INSTANCE_CLASS;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.SKIP_FINAL_SNAPSHOT;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.VPC_SECURITY_GROUP_IDS;
 import static com.cloudera.director.aws.rds.RDSProvider.RDSProviderConfigurationPropertyToken.REGION;
 import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_PASSWORD;
@@ -38,6 +39,7 @@ import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -82,17 +84,22 @@ public class RDSProviderTest {
           RDSEndpoints.getTestInstance(ImmutableMap.of("us-west-1", "https://rds.us-west-1.amazonaws.com"),
               DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
+      // Configure encryption instance classes
+      RDSEncryptionInstanceClasses encryptionInstanceClasses =
+          RDSEncryptionInstanceClasses.getTestInstance(ImmutableList.of("db.m3.large"),
+                                                       DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
       // Configure credentials
       Map<String, String> credentialsConfigMap = new LinkedHashMap<String, String>();
       SimpleConfiguration credentialsConfig = new SimpleConfiguration(credentialsConfigMap);
       AWSCredentialsProviderChain providerChain =
-          new AWSCredentialsProviderChainProvider().createCredentials(credentialsConfig,
+          new AWSCredentialsProviderChainProvider(null).createCredentials(credentialsConfig,
               DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Create provider
       RDSProvider rdsProvider = new RDSProvider(new SimpleConfiguration(providerConfigMap),
-          endpoints, new AmazonRDSClient(providerChain), new AmazonIdentityManagementClient(providerChain),
-          DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+          endpoints, encryptionInstanceClasses, new AmazonRDSClient(providerChain),
+          new AmazonIdentityManagementClient(providerChain), DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure instance template
       Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<String, String>();
@@ -104,12 +111,13 @@ public class RDSProviderTest {
       putConfig(instanceTemplateConfigMap, ADMIN_PASSWORD, "password");
 
       putConfig(instanceTemplateConfigMap, ALLOCATED_STORAGE, "5");
-      putConfig(instanceTemplateConfigMap, INSTANCE_CLASS, "db.t2.micro");
+      putConfig(instanceTemplateConfigMap, INSTANCE_CLASS, "db.m3.medium");
       putConfig(instanceTemplateConfigMap, DB_SUBNET_GROUP_NAME, "all-subnets");
       putConfig(instanceTemplateConfigMap, VPC_SECURITY_GROUP_IDS, "sg-4af9292f");
 
       putConfig(instanceTemplateConfigMap, BACKUP_RETENTION_PERIOD, "0");
       putConfig(instanceTemplateConfigMap, SKIP_FINAL_SNAPSHOT, "true");
+      putConfig(instanceTemplateConfigMap, STORAGE_ENCRYPTED, "true");
 
       Map<String, String> instanceTemplateTags = new LinkedHashMap<String, String>();
       instanceTemplateTags.put(InstanceTags.OWNER, username);

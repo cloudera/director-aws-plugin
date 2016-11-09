@@ -142,6 +142,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
             "eu-west-1",
             "sa-east-1",
             "us-east-1",
+            "us-east-2",
             "us-west-1",
             "us-west-2")
         .build()),
@@ -251,14 +252,16 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
   /**
    * Construct a new provider instance and validate all configurations.
    *
-   * @param configuration            the configuration
-   * @param endpoints                the RDS endpoints
-   * @param client                   the EC2 client
-   * @param identityManagementClient the AIM client
-   * @param cloudLocalizationContext the parent cloud localization context
+   * @param configuration             the configuration
+   * @param endpoints                 the RDS endpoints
+   * @param encryptionInstanceClasses the RDS encryption instance classes
+   * @param client                    the RDS client
+   * @param identityManagementClient  the AIM client
+   * @param cloudLocalizationContext  the parent cloud localization context
    */
   public RDSProvider(Configured configuration,
       RDSEndpoints endpoints,
+      RDSEncryptionInstanceClasses encryptionInstanceClasses,
       AmazonRDSClient client,
       AmazonIdentityManagementClient identityManagementClient,
       LocalizationContext cloudLocalizationContext) {
@@ -283,7 +286,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
 
     this.resourceTemplateConfigurationValidator =
         new CompositeConfigurationValidator(METADATA.getResourceTemplateConfigurationValidator(),
-            new RDSInstanceTemplateConfigurationValidator(this));
+            new RDSInstanceTemplateConfigurationValidator(this, encryptionInstanceClasses));
   }
 
   /**
@@ -466,6 +469,9 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
     }
     if (template.isPubliclyAccessible().isPresent()) {
       request = request.withPubliclyAccessible(template.isPubliclyAccessible().get());
+    }
+    if (template.isStorageEncrypted().isPresent()) {
+      request = request.withStorageEncrypted(template.isStorageEncrypted().get());
     }
 
     return request;

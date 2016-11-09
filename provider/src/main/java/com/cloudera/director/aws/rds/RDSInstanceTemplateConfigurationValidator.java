@@ -21,9 +21,11 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.ENGINE_VERSION;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.INSTANCE_CLASS;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.MULTI_AZ;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.spi.v1.model.util.SimpleResourceTemplate.SimpleResourceTemplateConfigurationPropertyToken.NAME;
 import static com.cloudera.director.spi.v1.model.util.Validations.addError;
+import static com.cloudera.director.spi.v1.util.Preconditions.checkNotNull;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.rds.AmazonRDSClient;
@@ -40,7 +42,6 @@ import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.util.Preconditions;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Throwables;
 
@@ -105,18 +106,30 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
   static final String AVAILABILITY_ZONE_NOT_ALLOWED_FOR_MULTI_AZ =
       "Availability zone must not be set when creating a Multi-AZ deployment: %s";
 
+  static final String ENCRYPTION_NOT_SUPPORTED =
+      "Storage encryption is not supported for instance class: %s";
+
   /**
    * The RDS provider.
    */
   private final RDSProvider provider;
 
   /**
+   * Instance classes that support storage encryption.
+   */
+  private final RDSEncryptionInstanceClasses encryptionInstanceClasses;
+
+  /**
    * Creates an RDS instance template configuration validator with the specified parameters.
    *
    * @param provider the RDS provider
+   * @param encryptionInstanceClasses instance classes that support storage encryption
    */
-  public RDSInstanceTemplateConfigurationValidator(RDSProvider provider) {
-    this.provider = Preconditions.checkNotNull(provider, "provider");
+  public RDSInstanceTemplateConfigurationValidator(RDSProvider provider,
+                                                   RDSEncryptionInstanceClasses encryptionInstanceClasses) {
+    this.provider = checkNotNull(provider, "provider is null");
+    this.encryptionInstanceClasses = checkNotNull(encryptionInstanceClasses,
+                                                  "encryptionInstanceClasses is null");
   }
 
   @Override
@@ -134,6 +147,7 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
     checkInstanceClass(configuration, accumulator, localizationContext);
     checkAllocatedStorage(configuration, accumulator, localizationContext);
     checkDBSubnetGroupName(client, configuration, accumulator, localizationContext);
+    checkStorageEncryption(configuration, accumulator, localizationContext);
   }
 
   // Rules:
@@ -367,6 +381,28 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
         if (availabilityZone != null) {
           addError(accumulator, AVAILABILITY_ZONE, localizationContext,
               null, AVAILABILITY_ZONE_NOT_ALLOWED_FOR_MULTI_AZ, availabilityZone);
+        }
+      }
+    }
+  }
+
+  @VisibleForTesting
+  void checkStorageEncryption(Configured configuration,
+      PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext) {
+
+    String storageEncryptedString =
+        configuration.getConfigurationValue(STORAGE_ENCRYPTED, localizationContext);
+
+    if (storageEncryptedString != null) {
+      boolean storageEncrypted = Boolean.parseBoolean(storageEncryptedString);
+
+      if (storageEncrypted) {
+        String instanceClass =
+            configuration.getConfigurationValue(INSTANCE_CLASS, localizationContext);
+        if (!encryptionInstanceClasses.apply(instanceClass)) {
+          addError(accumulator, STORAGE_ENCRYPTED, localizationContext,
+              null, ENCRYPTION_NOT_SUPPORTED, instanceClass);
         }
       }
     }

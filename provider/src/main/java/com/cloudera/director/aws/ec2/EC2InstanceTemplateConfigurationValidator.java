@@ -14,7 +14,14 @@
 
 package com.cloudera.director.aws.ec2;
 
+
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
+import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IAM_PROFILE_NAME;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
@@ -24,10 +31,9 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SECURITY_GROUP_IDS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
-import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
@@ -47,7 +53,12 @@ import com.amazonaws.services.ec2.model.Image;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
 import com.amazonaws.services.identitymanagement.model.NoSuchEntityException;
+import com.amazonaws.services.kms.AWSKMSClient;
+import com.amazonaws.services.kms.model.DescribeKeyRequest;
+import com.amazonaws.services.kms.model.NotFoundException;
 import com.cloudera.director.aws.AWSFilters;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata.EbsVolumeMetadata;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
@@ -194,6 +205,41 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   @VisibleForTesting
   static final String IMAGE_SPOT_PLATFORM_BLACKLIST_KEY = "spotPlatform";
 
+  @VisibleForTesting
+  static final int MAX_VOLUMES_PER_INSTANCE = 10;
+
+  @VisibleForTesting
+  static final String INVALID_EBS_VOLUME_COUNT_FORMAT_MSG =
+      "EBS volume count must be a integer: %s";
+
+  @VisibleForTesting
+  static final String INVALID_EBS_VOLUME_COUNT_MSG =
+      "EBS volume count must be a non-negative integer no greater than %s";
+
+  @VisibleForTesting
+  static final String INVALID_EBS_VOLUME_SIZE_FORMAT_MSG =
+      "EBS volume size must be a positive integer: %s";
+
+  @VisibleForTesting
+  static final String VOLUME_SIZE_NOT_IN_RANGE_MSG =
+      "Volume size for %s must be between %d GiB and %d GiB";
+
+  @VisibleForTesting
+  static final String INVALID_EBS_ENCRYPTION_MSG =
+      "EBS volume count should be greater than 0 to specify EBS encryption properties";
+
+  @VisibleForTesting
+  static final String INVALID_KMS_WHEN_ENCRYPTION_DISABLED_MSG =
+      "The KMS Key ID can only be set with encryption enabled";
+
+  @VisibleForTesting
+  static final String INVALID_KMS_NOT_FOUND_MESSAGE =
+      "The KMS Key ID could not be found";
+
+  @VisibleForTesting
+  static final String KMS_KEY_DENIED_MESSAGE =
+      "Access denied attempting to verify the KMS Key ID. Ensure kms:DescribeKey permission is granted";
+
   /**
    * The EC2 provider.
    */
@@ -205,12 +251,18 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   private final AWSFilters templateFilters;
 
   /**
+   * The EBS metadata.
+   */
+  private final EBSMetadata ebsMetadata;
+
+  /**
    * Creates an EC2 instance template configuration validator with the specified parameters.
    *
    * @param provider the EC2 provider
    */
-  public EC2InstanceTemplateConfigurationValidator(EC2Provider provider) {
+  public EC2InstanceTemplateConfigurationValidator(EC2Provider provider, EBSMetadata ebsMetadata) {
     this.provider = Preconditions.checkNotNull(provider, "provider");
+    this.ebsMetadata = Preconditions.checkNotNull(ebsMetadata, "ebsMetadata");
     templateFilters = provider.getEC2Filters().getSubfilters("template");
   }
 
@@ -219,6 +271,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
       PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
 
     AmazonEC2Client ec2Client = provider.getClient();
+    AWSKMSClient kmsClient = provider.getKmsClient();
 
     checkImage(ec2Client, configuration, accumulator, localizationContext);
     checkSubnetId(ec2Client, configuration, accumulator, localizationContext);
@@ -229,6 +282,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     checkIamProfileName(configuration, accumulator, localizationContext);
     checkRootVolumeSize(configuration, accumulator, localizationContext);
     checkRootVolumeType(configuration, accumulator, localizationContext);
+    checkEbsVolumes(kmsClient, configuration, accumulator, localizationContext);
     checkKeyName(ec2Client, configuration, accumulator, localizationContext);
     checkSpotParameters(configuration, accumulator, localizationContext);
   }
@@ -581,6 +635,112 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
       addError(accumulator, ROOT_VOLUME_TYPE, localizationContext,
           null, INVALID_ROOT_VOLUME_TYPE_MSG,
           rootVolumeType, Joiner.on(", ").join(ROOT_VOLUME_TYPES));
+    }
+  }
+
+  /**
+   * Validates the configuration for EBS volumes.
+   *
+   * @param kmsClient           the AWS KMS client
+   * @param configuration       the configuration to be validated
+   * @param accumulator         the exception condition accumulator
+   * @param localizationContext the localization context
+   */
+  @VisibleForTesting
+  void checkEbsVolumes(AWSKMSClient kmsClient, Configured configuration,
+                       PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
+    String ebsVolumeCountString = configuration.getConfigurationValue(EBS_VOLUME_COUNT, localizationContext);
+
+    int ebsVolumeCount;
+    try {
+      ebsVolumeCount = Integer.parseInt(ebsVolumeCountString);
+    } catch (NumberFormatException e) {
+      addError(accumulator, EBS_VOLUME_COUNT, localizationContext,
+        null, INVALID_EBS_VOLUME_COUNT_FORMAT_MSG, ebsVolumeCountString);
+      return;
+    }
+
+    if (ebsVolumeCount < 0 || ebsVolumeCount > MAX_VOLUMES_PER_INSTANCE) {
+      addError(accumulator, EBS_VOLUME_COUNT, localizationContext,
+          null, INVALID_EBS_VOLUME_COUNT_MSG, MAX_VOLUMES_PER_INSTANCE);
+      return;
+    }
+
+    boolean enableEbsEncryption;
+
+    enableEbsEncryption = Boolean.parseBoolean(
+        configuration.getConfigurationValue(ENCRYPT_ADDITIONAL_EBS_VOLUMES, localizationContext));
+
+    String kmsKeyId = configuration.getConfigurationValue(EBS_KMS_KEY_ID, localizationContext);
+
+    if (ebsVolumeCount == 0) {
+
+      // Disallow setting any EBS encryption configuration when not adding EBS
+      // volumes. This makes it more apparent that encryption is done on the
+      // added EBS volumes and not the root.
+
+      if (enableEbsEncryption) {
+        addError(accumulator, ENCRYPT_ADDITIONAL_EBS_VOLUMES, localizationContext, null, INVALID_EBS_ENCRYPTION_MSG);
+      }
+
+      if (kmsKeyId != null) {
+        addError(accumulator, EBS_KMS_KEY_ID, localizationContext, null, INVALID_EBS_ENCRYPTION_MSG);
+      }
+    }
+
+    if (ebsVolumeCount > 0) {
+
+      if (kmsKeyId != null) {
+        if (!enableEbsEncryption) {
+          addError(accumulator, EBS_KMS_KEY_ID, localizationContext, null, INVALID_KMS_WHEN_ENCRYPTION_DISABLED_MSG);
+        }
+        // verify that we can find the key in KMS
+        DescribeKeyRequest keyRequest = new DescribeKeyRequest().withKeyId(kmsKeyId);
+        try {
+          kmsClient.describeKey(keyRequest);
+        } catch (NotFoundException ex) {
+          addError(accumulator, EBS_KMS_KEY_ID, localizationContext, null, INVALID_KMS_NOT_FOUND_MESSAGE);
+        } catch (AmazonServiceException ex) {
+          if (ex.getErrorCode().equals("AccessDeniedException")) {
+            addError(accumulator, EBS_KMS_KEY_ID, localizationContext, null, KMS_KEY_DENIED_MESSAGE);
+          } else {
+            addError(accumulator, EBS_KMS_KEY_ID, localizationContext, null,
+                "AmazonServiceException exception " + ex.getErrorMessage());
+          }
+        }
+      }
+
+      String strEbsVolumeSizeGiB = configuration.getConfigurationValue(EBS_VOLUME_SIZE_GIB, localizationContext);
+
+      int ebsVolumeSizeGiB;
+      try {
+        ebsVolumeSizeGiB = Integer.parseInt(strEbsVolumeSizeGiB);
+      } catch (NumberFormatException e) {
+        addError(accumulator, EBS_VOLUME_SIZE_GIB, localizationContext,
+            null, INVALID_EBS_VOLUME_SIZE_FORMAT_MSG, strEbsVolumeSizeGiB);
+        return;
+      }
+
+      String volumeType = configuration.getConfigurationValue(EBS_VOLUME_TYPE, localizationContext);
+      EbsVolumeMetadata metadata;
+
+      try {
+        metadata = ebsMetadata.apply(volumeType);
+      } catch (NullPointerException e) {
+        addError(accumulator, EBS_VOLUME_TYPE, localizationContext, null, "Volume type unknown: " + e.getMessage());
+        return;
+      } catch (IllegalStateException e) {
+        addError(accumulator, EBS_VOLUME_TYPE, localizationContext, null, "Malformed metadata: " + e.getMessage());
+        return;
+      }
+
+      int minAllowableSize = metadata.getMinSizeGiB();
+      int maxAllowableSize = metadata.getMaxSizeGiB();
+
+      if (ebsVolumeSizeGiB > maxAllowableSize || ebsVolumeSizeGiB < minAllowableSize) {
+        addError(accumulator, EBS_VOLUME_SIZE_GIB, localizationContext,
+            null, VOLUME_SIZE_NOT_IN_RANGE_MSG, volumeType, minAllowableSize, maxAllowableSize);
+      }
     }
   }
 

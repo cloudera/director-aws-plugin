@@ -15,6 +15,11 @@
 package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IAM_PROFILE_NAME;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
@@ -94,6 +99,79 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .defaultDescription("The availability zone.")
         .hidden(true)
         .build()),
+
+    /**
+     * Number of additional EBS volumes to mount.
+     */
+    EBS_VOLUME_COUNT(new SimpleConfigurationPropertyBuilder()
+      .configKey("ebsVolumeCount")
+      .name("EBS Volume Count")
+      .defaultValue("0")
+      .defaultDescription(
+        "The number of additional EBS volumes to mount. Cloudera Director will create and attach these volumes to the " +
+          "provisioned instance. These added volumes will be deleted when the instance is terminated from Director. <br />" +
+          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumes.html'>More Information</a>"
+      ).widget(ConfigurationProperty.Widget.NUMBER)
+      .type(Property.Type.INTEGER)
+      .build()),
+
+    /**
+     * The size of the additional EBS volume in GiB.
+     */
+    EBS_VOLUME_SIZE_GIB(new SimpleConfigurationPropertyBuilder()
+      .configKey("ebsVolumeSizeGiB")
+      .name("EBS Volume Size (GiB)")
+      .defaultValue("500")
+      .defaultDescription(
+        "The size of the additional EBS volume(s) in GiB."
+      ).widget(ConfigurationProperty.Widget.NUMBER)
+      .type(Property.Type.INTEGER)
+      .build()),
+
+    /**
+     * The volume type of the additional EBS volumes.
+     */
+    EBS_VOLUME_TYPE(new SimpleConfigurationPropertyBuilder()
+      .configKey("ebsVolumeType")
+      .name("EBS Volume Type")
+      .addValidValues("st1", "sc1", "gp2")
+      .defaultValue("st1")
+      .defaultDescription(
+        "The EBS volume type for the additional EBS volumes. Supported volumes are Throughput Optimized HDD (st1), " +
+          "Cold HDD (sc1) and General Purpose SSD (gp2) <br />" +
+          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html'>More Information</a>"
+      ).widget(ConfigurationProperty.Widget.OPENLIST)
+      .build()),
+
+    /**
+     * Whether to enable ebs encryption of the additional EBS volumes.
+     *
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html">EBS Encryption</a>
+     */
+    ENCRYPT_ADDITIONAL_EBS_VOLUMES(new SimpleConfigurationPropertyBuilder()
+        .configKey("enableEbsEncryption")
+        .name("Enable EBS Encryption")
+        .defaultValue("false")
+        .type(Property.Type.BOOLEAN)
+        .defaultDescription(
+            "Whether to enable encryption for the additional EBS volumes. Note that encryption does not apply to the root volume.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html'>More Information</a>"
+        ).widget(ConfigurationProperty.Widget.CHECKBOX)
+        .build()),
+
+    /**
+     * The CMK to use for encryption of the additional EBS volumes.
+     *
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html">EBS Encryption</a>
+     */
+    EBS_KMS_KEY_ID(new SimpleConfigurationPropertyBuilder()
+        .configKey("ebsKmsKeyId")
+        .name("EBS KMS Key ID")
+        .defaultDescription(
+            "The full ARN of the KMS CMK to use when encrypting volumes. If encryption is enabled and this " +
+                "is blank, the default CMK will be used. Note that encryption does not apply to the root volume.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSEncryption.html'>More Information</a>"
+        ).build()),
 
     /**
      * Name of the IAM instance profile.
@@ -399,6 +477,31 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final String rootVolumeType;
 
   /**
+   * Number of additional EBS volumes to mount.
+   */
+  private final int ebsVolumeCount;
+
+  /**
+   * The size of the additional EBS volume in GiB.
+   */
+  private final int ebsVolumeSizeGiB;
+
+  /**
+   * The volume type of the additional EBS volumes.
+   */
+  private final String ebsVolumeType;
+
+  /**
+   * Whether to enable ebs encryption of the additional EBS volumes.
+   */
+  private final boolean enableEbsEncryption;
+
+  /**
+   * The optional CMK to use for encryption of the additional EBS volumes.
+   */
+  private final Optional<String> ebsKmsKeyId;
+
+  /**
    * The optional IAM profile name.
    */
   private final Optional<String> iamProfileName;
@@ -446,6 +549,13 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     this.rootVolumeSizeGB =
         Integer.parseInt(getConfigurationValue(ROOT_VOLUME_SIZE_GB, localizationContext));
     this.rootVolumeType = getConfigurationValue(ROOT_VOLUME_TYPE, localizationContext);
+
+    this.ebsVolumeCount = Integer.parseInt(getConfigurationValue(EBS_VOLUME_COUNT, localizationContext));
+    this.ebsVolumeSizeGiB = Integer.parseInt(getConfigurationValue(EBS_VOLUME_SIZE_GIB, localizationContext));
+    this.ebsVolumeType = getConfigurationValue(EBS_VOLUME_TYPE, localizationContext);
+    this.enableEbsEncryption =
+        Boolean.parseBoolean(getConfigurationValue(ENCRYPT_ADDITIONAL_EBS_VOLUMES, localizationContext));
+    this.ebsKmsKeyId = Optional.fromNullable(getConfigurationValue(EBS_KMS_KEY_ID, localizationContext));
 
     this.iamProfileName =
         Optional.fromNullable(getConfigurationValue(IAM_PROFILE_NAME, localizationContext));
@@ -538,6 +648,52 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   public String getRootVolumeType() {
     return rootVolumeType;
+  }
+
+
+  /**
+   * Returns the EBS volume count.
+   *
+   * @return the EBS volume count
+   */
+  public int getEbsVolumeCount() {
+    return ebsVolumeCount;
+  }
+
+  /**
+   * Returns the EBS volume size in GiB.
+   *
+   * @return the EBS volume size in GiB
+   */
+  public int getEbsVolumeSizeGiB() {
+    return ebsVolumeSizeGiB;
+  }
+
+  /**
+   * Returns the EBS volume type.
+   *
+   * @return the EBS volume type.
+   */
+  public String getEbsVolumeType() {
+    return ebsVolumeType;
+  }
+
+  /**
+   * Returns whether to enable EBS encryption.
+   *
+   * @return whether to enable EBS encryption.
+   */
+  public boolean isEnableEbsEncryption() {
+    return enableEbsEncryption;
+  }
+
+  /**
+   * Returns the optional CMK to use for encryption of the additional EBS volumes.
+   *
+   * @return the optional CMK to use for encryption of the additional EBS volumes.
+   */
+  public Optional<String> getEbsKmsKeyId() {
+    return ebsKmsKeyId;
   }
 
   /**

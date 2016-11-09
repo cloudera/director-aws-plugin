@@ -34,6 +34,7 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.PREFERRED_MAINTENANCE_WINDOW;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.PUBLICLY_ACCESSIBLE;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.SKIP_FINAL_SNAPSHOT;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.VPC_SECURITY_GROUP_IDS;
 import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_PASSWORD;
 import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_USERNAME;
@@ -278,14 +279,14 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
                 + " to be initially allocated for the DB instance.")
         .build()),
 
-    /**
-     * The KMS key identifier for an encrypted DB instance.
-     */
-    KMS_KEY_ID(new SimpleConfigurationPropertyBuilder()
-        .configKey("kmsKeyId")
-        .name("KMS key ID")
-        .defaultDescription("The KMS key identifier for an encrypted DB instance.")
-        .build()),
+    // /**
+    //  * The KMS key identifier for an encrypted DB instance.
+    //  */
+    // KMS_KEY_ID(new SimpleConfigurationPropertyBuilder()
+    //     .configKey("kmsKeyId")
+    //     .name("KMS key ID")
+    //     .defaultDescription("The KMS key identifier for an encrypted DB instance.")
+    //     .build()),
 
     /**
      * The license model information for this DB instance.
@@ -384,6 +385,16 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
         .name("Skip final snapshot")
         .widget(ConfigurationProperty.Widget.CHECKBOX)
         .defaultDescription("Whether to skip a final snapshot before the DB instance is deleted.")
+        .build()),
+
+    /**
+     * Whether the DB instance is encrypted.
+     */
+    STORAGE_ENCRYPTED(new SimpleConfigurationPropertyBuilder()
+        .configKey("storageEncrypted")
+        .name("Encrypt DB instance")
+        .widget(ConfigurationProperty.Widget.CHECKBOX)
+        .defaultDescription("Whether the DB instance is encrypted")
         .build()),
 
     /**
@@ -540,6 +551,11 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
   private final Optional<Boolean> skipFinalSnapshot;
 
   /**
+   * Whether the DB instance is encrypted.
+   */
+  private final Optional<Boolean> storageEncrypted;
+
+  /**
    * A comma-separated list of EC2 VPC security groups to associate with this DB instance.
    */
   private final List<String> vpcSecurityGroupIds;
@@ -603,6 +619,8 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
         getOptionalBooleanConfigurationValue(PUBLICLY_ACCESSIBLE, localizationContext);
     this.skipFinalSnapshot =
         getOptionalBooleanConfigurationValue(SKIP_FINAL_SNAPSHOT, localizationContext);
+    this.storageEncrypted =
+        getOptionalBooleanConfigurationValue(STORAGE_ENCRYPTED, localizationContext);
     this.vpcSecurityGroupIds = CSV_SPLITTER.splitToList(
         getConfigurationValue(VPC_SECURITY_GROUP_IDS, localizationContext));
   }
@@ -795,6 +813,15 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    */
   public Optional<Boolean> isSkipFinalSnapshot() {
     return skipFinalSnapshot;
+  }
+
+  /**
+   * Returns whether the DB instance is encrypted.
+   *
+   * @return whether the DB instance is encrypted
+   */
+  public Optional<Boolean> isStorageEncrypted() {
+    return storageEncrypted;
   }
 
   /**

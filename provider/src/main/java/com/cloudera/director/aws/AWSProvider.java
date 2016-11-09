@@ -20,11 +20,15 @@ import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProviderChain;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
+import com.amazonaws.services.kms.AWSKMSClient;
 import com.amazonaws.services.rds.AmazonRDSClient;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClient;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EC2ProviderConfigurationValidator;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.aws.rds.RDSProvider;
 import com.cloudera.director.aws.rds.RDSProviderConfigurationValidator;
@@ -80,8 +84,8 @@ public class AWSProvider extends AbstractCloudProvider {
    */
   protected static AWSCredentialsProviderChain getCredentialsProviderChain(Configured configuration,
       LocalizationContext cloudLocalizationContext) {
-    return new AWSCredentialsProviderChainProvider().createCredentials(configuration,
-        cloudLocalizationContext);
+    return new AWSCredentialsProviderChainProvider(new AWSSecurityTokenServiceClient())
+        .createCredentials(configuration, cloudLocalizationContext);
   }
 
   /**
@@ -95,6 +99,11 @@ public class AWSProvider extends AbstractCloudProvider {
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
 
   /**
+   * The EBS metadata.
+   */
+  private final EBSMetadata ebsMetadata;
+
+  /**
    * The virtualization mappings.
    */
   private final VirtualizationMappings virtualizationMappings;
@@ -103,6 +112,11 @@ public class AWSProvider extends AbstractCloudProvider {
    * The RDS endpoints.
    */
   private final RDSEndpoints rdsEndpoints;
+
+  /**
+   * The RDS encryption instance classes.
+   */
+  private final RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses;
 
   /**
    * The AWS config.
@@ -117,18 +131,24 @@ public class AWSProvider extends AbstractCloudProvider {
   /**
    * Creates an AWS provider with the specified parameters.
    *
-   * @param configuration           the configuration
-   * @param ephemeralDeviceMappings the ephemeral device mappings
-   * @param virtualizationMappings  the virtualization mappings
-   * @param rdsEndpoints            the RDS endpoints
-   * @param awsClientConfig         the AWS client configuration
-   * @param awsFilters              the AWS filters
-   * @param rootLocalizationContext the root localization context
+   * @param configuration                the configuration
+   * @param ephemeralDeviceMappings      the ephemeral device mappings
+   * @param ebsMetadata                  the EBS metadata
+   * @param virtualizationMappings       the virtualization mappings
+   * @param rdsEndpoints                 the RDS endpoints
+   * @param rdsEncryptionInstanceClasses the RDS encryption instance classes
+   * @param awsClientConfig              the AWS client configuration
+   * @param awsFilters                   the AWS filters
+   * @param rootLocalizationContext      the root localization context
    */
   public AWSProvider(Configured configuration, EphemeralDeviceMappings ephemeralDeviceMappings,
-      VirtualizationMappings virtualizationMappings, RDSEndpoints rdsEndpoints,
-      AWSClientConfig awsClientConfig, AWSFilters awsFilters, LocalizationContext rootLocalizationContext) {
-    this(configuration, ephemeralDeviceMappings, virtualizationMappings, rdsEndpoints,
+                     EBSMetadata ebsMetadata, VirtualizationMappings virtualizationMappings,
+                     RDSEndpoints rdsEndpoints,
+                     RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses,
+                     AWSClientConfig awsClientConfig, AWSFilters awsFilters,
+                     LocalizationContext rootLocalizationContext) {
+    this(configuration, ephemeralDeviceMappings, ebsMetadata, virtualizationMappings,
+        rdsEndpoints, rdsEncryptionInstanceClasses,
         awsClientConfig,
         awsFilters, getCredentialsProviderChain(configuration,
             METADATA.getLocalizationContext(rootLocalizationContext)),
@@ -138,27 +158,33 @@ public class AWSProvider extends AbstractCloudProvider {
   /**
    * Creates an AWS provider with the specified parameters.
    *
-   * @param configuration            the configuration
-   * @param ephemeralDeviceMappings  the ephemeral device mappings
-   * @param virtualizationMappings   the virtualization mappings
-   * @param rdsEndpoints             the RDS endpoints
-   * @param awsClientConfig          the AWS client configuration
-   * @param awsFilters               the AWS filters
-   * @param credentialsProviderChain the AWS credentialsProviderChain
-   * @param rootLocalizationContext  the root localization context
+   * @param configuration                the configuration
+   * @param ephemeralDeviceMappings      the ephemeral device mappings
+   * @param ebsMetadata                  the ebs metadata
+   * @param virtualizationMappings       the virtualization mappings
+   * @param rdsEndpoints                 the RDS endpoints
+   * @param rdsEncryptionInstanceClasses the RDS encryption instance classes
+   * @param awsClientConfig              the AWS client configuration
+   * @param awsFilters                   the AWS filters
+   * @param credentialsProviderChain     the AWS credentialsProviderChain
+   * @param rootLocalizationContext      the root localization context
    */
   @SuppressWarnings({"PMD.UnusedFormalParameter", "UnusedParameters"})
   public AWSProvider(Configured configuration, EphemeralDeviceMappings ephemeralDeviceMappings,
-      VirtualizationMappings virtualizationMappings, RDSEndpoints rdsEndpoints,
-      AWSClientConfig awsClientConfig, AWSFilters awsFilters,
-      AWSCredentialsProviderChain credentialsProviderChain,
-      LocalizationContext rootLocalizationContext) {
+                     EBSMetadata ebsMetadata, VirtualizationMappings virtualizationMappings,
+                     RDSEndpoints rdsEndpoints,
+                     RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses,
+                     AWSClientConfig awsClientConfig, AWSFilters awsFilters,
+                     AWSCredentialsProviderChain credentialsProviderChain,
+                     LocalizationContext rootLocalizationContext) {
     super(METADATA, rootLocalizationContext);
     this.credentialsProviderChain =
         checkNotNull(credentialsProviderChain, "credentialsProviderChain is null");
     this.ephemeralDeviceMappings = ephemeralDeviceMappings;
+    this.ebsMetadata = ebsMetadata;
     this.virtualizationMappings = virtualizationMappings;
     this.rdsEndpoints = rdsEndpoints;
+    this.rdsEncryptionInstanceClasses = rdsEncryptionInstanceClasses;
     this.awsClientConfig = awsClientConfig;
     this.awsFilters = checkNotNull(awsFilters, "awsFilters");
   }
@@ -172,8 +198,10 @@ public class AWSProvider extends AbstractCloudProvider {
       AmazonEC2Client client = new AmazonEC2Client(credentialsProviderChain, clientConfiguration);
       AmazonIdentityManagementClient identityManagementClient =
           new AmazonIdentityManagementClient(credentialsProviderChain, clientConfiguration);
+      AWSKMSClient kmsClient =
+          new AWSKMSClient(credentialsProviderChain, clientConfiguration);
       providerSpecificValidator =
-          new EC2ProviderConfigurationValidator(client, identityManagementClient);
+          new EC2ProviderConfigurationValidator(client, identityManagementClient, kmsClient);
     } else if (resourceProviderMetadata.getId().equals(RDSProvider.METADATA.getId())) {
       AmazonRDSClient client = new AmazonRDSClient(credentialsProviderChain, clientConfiguration);
       providerSpecificValidator = new RDSProviderConfigurationValidator(client, rdsEndpoints);
@@ -205,9 +233,10 @@ public class AWSProvider extends AbstractCloudProvider {
    */
   protected EC2Provider createEC2Provider(Configured target) {
     ClientConfiguration clientConfiguration = getClientConfiguration();
-    return new EC2Provider(target, ephemeralDeviceMappings, virtualizationMappings, awsFilters,
+    return new EC2Provider(target, ephemeralDeviceMappings, ebsMetadata, virtualizationMappings, awsFilters,
         new AmazonEC2Client(credentialsProviderChain, clientConfiguration),
         new AmazonIdentityManagementClient(credentialsProviderChain, clientConfiguration),
+        new AWSKMSClient(credentialsProviderChain, clientConfiguration),
         getLocalizationContext());
   }
 
@@ -219,7 +248,7 @@ public class AWSProvider extends AbstractCloudProvider {
    */
   protected RDSProvider createRDSProvider(Configured target) {
     ClientConfiguration clientConfiguration = getClientConfiguration();
-    return new RDSProvider(target, rdsEndpoints,
+    return new RDSProvider(target, rdsEndpoints, rdsEncryptionInstanceClasses,
         new AmazonRDSClient(credentialsProviderChain, clientConfiguration),
         new AmazonIdentityManagementClient(credentialsProviderChain, clientConfiguration),
         getLocalizationContext());

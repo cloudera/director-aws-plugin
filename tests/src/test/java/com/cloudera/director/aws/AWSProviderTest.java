@@ -22,9 +22,11 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.aws.rds.RDSProvider;
 import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
@@ -36,6 +38,7 @@ import com.cloudera.director.spi.v1.provider.CloudProviderMetadata;
 import com.cloudera.director.spi.v1.provider.CredentialsProviderMetadata;
 import com.cloudera.director.spi.v1.provider.ResourceProvider;
 import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 
@@ -70,6 +73,11 @@ public class AWSProviderTest {
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.large", 1),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
+    // Configure ephemeral device mappings etc.
+    EBSMetadata ebsMetadata =
+        EBSMetadata.getDefaultInstance(ImmutableMap.of("st1", "500-16384"),
+            DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
     // Configure virtualization mappings
     VirtualizationMappings virtualizationMappings =
         VirtualizationMappings.getTestInstance(ImmutableMap.of("hvm", Arrays.asList("m3.large")),
@@ -79,6 +87,11 @@ public class AWSProviderTest {
     RDSEndpoints rdsEndpoints =
         RDSEndpoints.getTestInstance(ImmutableMap.of("us-east-1", "https://rds.us-east-1.amazonaws.com"),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
+    // Configure RDS encryption instance classes
+    RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses =
+        RDSEncryptionInstanceClasses.getTestInstance(ImmutableList.of("db.m3.large"),
+                                                     DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
     // Configure filters
     AWSFilters awsFilters = AWSFilters.EMPTY_FILTERS;
@@ -90,8 +103,8 @@ public class AWSProviderTest {
     AWSClientConfig awsClientConfig = new AWSClientConfig(new SimpleConfiguration(),
         httpProxyParameters, cloudLocalizationContext);
     Configured configuration = new SimpleConfiguration(environmentConfig);
-    AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings,
-        virtualizationMappings, rdsEndpoints, awsClientConfig,
+    AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
+        virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig,
         awsFilters, AWSProvider.getCredentialsProviderChain(configuration,
         cloudLocalizationContext),
         cloudLocalizationContext);

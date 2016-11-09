@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+
+<ruleset name="Director ruleset"
+    xmlns="http://pmd.sourceforge.net/ruleset/2.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://pmd.sourceforge.net/ruleset/2.0.0 http://pmd.sourceforge.net/ruleset_2_0_0.xsd">
+  <description>
+The Director ruleset.
+  </description>
+
+  <rule ref="rulesets/java/basic.xml" />
+  <rule ref="rulesets/java/imports.xml" />
+  <rule ref="rulesets/java/unusedcode.xml" />
+
+  <!--
+    Do not flag classes with private @PostConstruct or @PreDestroy methods as
+    having unused private methods.
+  -->
+  <rule ref="rulesets/java/unusedcode.xml/UnusedPrivateMethod">
+    <properties>
+      <property name="violationSuppressXPath"
+                value="//ClassOrInterfaceBodyDeclaration/Annotation/MarkerAnnotation/Name[@Image='PostConstruct' or @Image='PreDestroy']" />
+    </properties>
+  </rule>
+</ruleset>

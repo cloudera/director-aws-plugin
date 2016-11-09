@@ -17,16 +17,19 @@ package com.cloudera.director.aws.ec2;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.ASSOCIATE_PUBLIC_IP_ADDRESSES;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.IAM_ENDPOINT;
+import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.IMPORT_KEY_PAIR_IF_MISSING;
+import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.KMS_REGION_ENDPOINT;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION_ENDPOINT;
 import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_JCE_PRIVATE_KEY;
 import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_JCE_PUBLIC_KEY;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.collect.Iterables.getFirst;
+import static com.google.common.collect.Iterables.getOnlyElement;
 
 import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
+import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.BlockDeviceMapping;
 import com.amazonaws.services.ec2.model.CancelSpotInstanceRequestsRequest;
@@ -34,6 +37,8 @@ import com.amazonaws.services.ec2.model.CancelSpotInstanceRequestsResult;
 import com.amazonaws.services.ec2.model.CreateTagsRequest;
 import com.amazonaws.services.ec2.model.DescribeImagesRequest;
 import com.amazonaws.services.ec2.model.DescribeImagesResult;
+import com.amazonaws.services.ec2.model.DescribeInstanceAttributeRequest;
+import com.amazonaws.services.ec2.model.DescribeInstanceAttributeResult;
 import com.amazonaws.services.ec2.model.DescribeInstanceStatusRequest;
 import com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
 import com.amazonaws.services.ec2.model.DescribeInstancesRequest;
@@ -42,9 +47,16 @@ import com.amazonaws.services.ec2.model.DescribeKeyPairsResult;
 import com.amazonaws.services.ec2.model.DescribeRegionsResult;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsRequest;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsResult;
+import com.amazonaws.services.ec2.model.DescribeVolumesRequest;
+import com.amazonaws.services.ec2.model.DescribeVolumesResult;
+import com.amazonaws.services.ec2.model.EbsBlockDevice;
 import com.amazonaws.services.ec2.model.Filter;
 import com.amazonaws.services.ec2.model.IamInstanceProfileSpecification;
+import com.amazonaws.services.ec2.model.Image;
+import com.amazonaws.services.ec2.model.ImportKeyPairRequest;
 import com.amazonaws.services.ec2.model.Instance;
+import com.amazonaws.services.ec2.model.InstanceAttributeName;
+import com.amazonaws.services.ec2.model.InstanceBlockDeviceMapping;
 import com.amazonaws.services.ec2.model.InstanceNetworkInterfaceSpecification;
 import com.amazonaws.services.ec2.model.InstanceStateName;
 import com.amazonaws.services.ec2.model.InstanceStatus;
@@ -63,13 +75,18 @@ import com.amazonaws.services.ec2.model.SpotPlacement;
 import com.amazonaws.services.ec2.model.Tag;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 import com.amazonaws.services.ec2.model.TerminateInstancesResult;
+import com.amazonaws.services.ec2.model.Volume;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
 import com.amazonaws.services.identitymanagement.model.NoSuchEntityException;
+import com.amazonaws.services.kms.AWSKMSClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.InstanceTags;
 import com.cloudera.director.aws.Tags;
+import com.cloudera.director.aws.ec2.ebs.EBSAllocator;
+import com.cloudera.director.aws.ec2.ebs.EBSAllocator.InstanceEbsVolumes;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.spi.v1.compute.util.AbstractComputeProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
@@ -105,6 +122,7 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 import com.google.common.hash.Hasher;
 import com.google.common.hash.Hashing;
+import com.google.common.io.BaseEncoding;
 
 import java.io.IOException;
 import java.net.InetAddress;
@@ -113,6 +131,7 @@ import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
@@ -202,8 +221,29 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     IAM_ENDPOINT(new SimpleConfigurationPropertyBuilder()
         .configKey("iamEndpoint")
         .name("IAM endpoint")
-        .defaultDescription("<p>IAM endpoint is an optional URL that Cloudera Director can use to communicate with the AWS Identity and Access Management service.  AWS provides a single endpoint for IAM.</p>For more information see the <a target=\"_blank\" href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#iam_region\">AWS documentation.</a>")
+        .defaultDescription("<p>IAM endpoint is an optional URL that Cloudera Director can use to communicate with" +
+          " the AWS Identity and Access Management service.  AWS provides a single endpoint for IAM.</p>For more" +
+          " information see the <a target=\"_blank\" href=" +
+          "\"http://docs.aws.amazon.com/general/latest/gr/rande.html#iam_region\">AWS documentation.</a>")
         .build()),
+
+    /**
+     * Whether to import key pair to AWS if it's missing. Default is <code>false</code>.
+     *
+     * @see <a href="http://docs.aws.amazon.com/cli/latest/reference/ec2/import-key-pair.html"> Importing key pair
+     * to your AWS account.</a>
+     */
+    IMPORT_KEY_PAIR_IF_MISSING(new SimpleConfigurationPropertyBuilder()
+      .configKey("importKeyPairIfMissing")
+      .name("Import key pair if missing")
+      .widget(ConfigurationProperty.Widget.CHECKBOX)
+      .defaultValue("false")
+      .type(Property.Type.BOOLEAN)
+      .defaultDescription("<p>Whether to import missing key pair to your EC2 account. The public key is " +
+        "extracted from PEM encoding of the private key supplied in the request.</p>For more information see the " +
+        "<a target=\"_blank\" href=\"http://docs.aws.amazon.com/cli/latest/reference/ec2/import-key-pair.html\">" +
+        "AWS documentation.</a>")
+      .build()),
 
     /**
      * EC2 region. Each region is a separate geographic area. Each region has multiple, isolated
@@ -226,6 +266,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             "eu-west-1",
             "sa-east-1",
             "us-east-1",
+            "us-east-2",
             "us-west-1",
             "us-west-2")
         .build()),
@@ -239,6 +280,17 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         .configKey("regionEndpoint")
         .name("EC2 region endpoint")
         .defaultDescription("<p>EC2 region endpoint is an optional URL that Cloudera Director can use to communicate with the AWS EC2 service.  AWS provides multiple regional endpoints for EC2 as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#ec2_region\">AWS documentation.</a>")
+        .build()),
+
+    /**
+     * <p>Custom endpoint identifying a region for KMS.</p>
+     * <p>This is critical for Gov. cloud because there is no other way to discover those
+     * regions.</p>
+     */
+    KMS_REGION_ENDPOINT(new SimpleConfigurationPropertyBuilder()
+        .configKey("kmsRegionEndpoint")
+        .name("KMS region endpoint")
+        .defaultDescription("<p>KMS region endpoint is an optional URL that Cloudera Director can use to communicate with the AWS KMS service. AWS provides multiple regional endpoints for KMS as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#kms_region\">AWS documentation.</a>")
         .build());
 
     /**
@@ -258,6 +310,30 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     @Override
     public ConfigurationProperty unwrap() {
       return configurationProperty;
+    }
+  }
+
+  private enum EBSAllocationStrategy {
+    NO_EBS_VOLUMES,
+    AS_INSTANCE_REQUEST,
+    AS_SEPARATE_REQUESTS;
+
+    private static EBSAllocationStrategy get(EC2InstanceTemplate template) {
+      if (template.getEbsVolumeCount() == 0) {
+        return NO_EBS_VOLUMES;
+      }
+
+      // Ideally we want to request EBS volumes as part of the instance launch request.
+      // However due to AWS API limitations, requesting encrypted EBS volumes with a
+      // user specified KMS key can not be done as part of instance launch. In this
+      // scenario we have to individually create and attach each EBS volume separately
+      // after instance launch.
+
+      if (template.isEnableEbsEncryption() && template.getEbsKmsKeyId().isPresent()) {
+        return AS_SEPARATE_REQUESTS;
+      } else {
+        return AS_INSTANCE_REQUEST;
+      }
     }
   }
 
@@ -285,7 +361,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       String regionEndpoint =
           configuration.getConfigurationValue(REGION_ENDPOINT, providerLocalizationContext);
       if (regionEndpoint != null) {
-        LOG.info("<< Using configured region endpoint: {}", regionEndpoint);
+        LOG.info("<< Using configured region endpoint for EC2 client: {}", regionEndpoint);
       } else {
         String region = configuration.getConfigurationValue(REGION, providerLocalizationContext);
         regionEndpoint = getEndpointForRegion(client, region);
@@ -355,6 +431,65 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   }
 
   /**
+   * Configures the specified KMS client.
+   *
+   * @param configuration               the provider configuration
+   * @param accumulator                 the exception accumulator
+   * @param kmsClient                   the KMS client
+   * @param providerLocalizationContext the resource provider localization context
+   * @return the configured client
+   * @throws InvalidCredentialsException    if the supplied credentials are invalid
+   * @throws TransientProviderException     if a transient exception occurs communicating with the
+   *                                        provider
+   * @throws UnrecoverableProviderException if an unrecoverable exception occurs communicating with
+   *                                        the provider
+   */
+  protected static AWSKMSClient configureKmsClient(Configured configuration,
+      PluginExceptionConditionAccumulator accumulator, AWSKMSClient kmsClient,
+      LocalizationContext providerLocalizationContext) {
+    checkNotNull(kmsClient, "kmsClient is null");
+
+    try {
+      String regionEndpoint = configuration.getConfigurationValue(KMS_REGION_ENDPOINT, providerLocalizationContext);
+      if (regionEndpoint != null) {
+        LOG.info("<< Using configured region endpoint for KMS client: {}", regionEndpoint);
+      } else {
+        String region = configuration.getConfigurationValue(REGION, providerLocalizationContext);
+        regionEndpoint = getKMSEndpointForRegion(kmsClient, region);
+      }
+      kmsClient.setEndpoint(regionEndpoint);
+    } catch (AmazonClientException e) {
+      throw AWSExceptions.propagate(e);
+    } catch (IllegalArgumentException e) {
+      accumulator.addError(REGION.unwrap().getConfigKey(), e.getMessage());
+    }
+    return kmsClient;
+  }
+
+  /**
+   * Returns the KMS endpoint URL for the specified region.
+   *
+   * @param kmsClient  the KMS client
+   * @param regionName the desired region
+   * @return the endpoint URL for the specified region
+   * @throws IllegalArgumentException if the endpoint cannot be determined
+   */
+  private static String getKMSEndpointForRegion(AWSKMSClient kmsClient, String regionName) {
+    checkNotNull(kmsClient, "kmsClient is null");
+    checkNotNull(regionName, "regionName is null");
+
+    com.amazonaws.regions.Region region = RegionUtils.getRegion(regionName);
+
+    if (region == null) {
+      throw new IllegalArgumentException(String.format("Unable to find the region %s", regionName));
+    }
+
+    String serviceName = kmsClient.getServiceName();
+    String protocolPrefix = region.hasHttpsEndpoint(serviceName) ? "https://" : "http://";
+    return protocolPrefix + region.getServiceEndpoint(serviceName);
+  }
+
+  /**
    * Returns the endpoint URL for the specified region.
    *
    * @param client     the EC2 client
@@ -385,26 +520,33 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         + "Choose one of the following regions: %s", regionName, Joiner.on(", ").join(regions)));
   }
 
+  private static final String PUBLIC_KEY_PREFIX = "CLOUDERA-";
   private final AmazonEC2Client client;
   private final AmazonIdentityManagementClient identityManagementClient;
+  private final AWSKMSClient kmsClient;
 
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
   private final VirtualizationMappings virtualizationMappings;
   private final AWSFilters ec2Filters;
 
   private final boolean associatePublicIpAddresses;
+  private final boolean importKeyPairIfMissing;
 
   private final ConfigurationValidator resourceTemplateConfigurationValidator;
+
+  private final EBSAllocator ebsAllocator;
 
   /**
    * Construct a new provider instance and validate all configurations.
    *
    * @param configuration            the configuration
    * @param ephemeralDeviceMappings  the ephemeral device mappings
+   * @param ebsMetadata              the EBS metadata
    * @param virtualizationMappings   the virtualization mappings
    * @param awsFilters               the AWS filters
    * @param client                   the EC2 client
    * @param identityManagementClient the IAM client
+   * @param kmsClient                the KMS client
    * @param cloudLocalizationContext the parent cloud localization context
    * @throws InvalidCredentialsException    if the supplied credentials are invalid
    * @throws TransientProviderException     if a transient exception occurs communicating with the
@@ -413,9 +555,9 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    *                                        the provider
    */
   public EC2Provider(Configured configuration,
-      EphemeralDeviceMappings ephemeralDeviceMappings,
+      EphemeralDeviceMappings ephemeralDeviceMappings, EBSMetadata ebsMetadata,
       VirtualizationMappings virtualizationMappings, AWSFilters awsFilters, AmazonEC2Client client,
-      AmazonIdentityManagementClient identityManagementClient,
+      AmazonIdentityManagementClient identityManagementClient, AWSKMSClient kmsClient,
       LocalizationContext cloudLocalizationContext) {
     super(configuration, METADATA, cloudLocalizationContext);
     LocalizationContext localizationContext = getLocalizationContext();
@@ -429,6 +571,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     this.client = configureClient(configuration, accumulator, client, localizationContext, false);
     this.identityManagementClient = configureIAMClient(configuration, accumulator,
         identityManagementClient, localizationContext, false);
+    this.kmsClient = configureKmsClient(configuration, accumulator, kmsClient, localizationContext);
+
     if (accumulator.hasError()) {
       PluginExceptionDetails pluginExceptionDetails =
           new PluginExceptionDetails(accumulator.getConditionsByKey());
@@ -439,9 +583,14 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     this.associatePublicIpAddresses = Boolean.parseBoolean(
         getConfigurationValue(ASSOCIATE_PUBLIC_IP_ADDRESSES, localizationContext));
 
+    this.importKeyPairIfMissing = Boolean.parseBoolean(
+      getConfigurationValue(IMPORT_KEY_PAIR_IF_MISSING, localizationContext));
+
     this.resourceTemplateConfigurationValidator =
         new CompositeConfigurationValidator(METADATA.getResourceTemplateConfigurationValidator(),
-            new EC2InstanceTemplateConfigurationValidator(this));
+            new EC2InstanceTemplateConfigurationValidator(this, ebsMetadata));
+
+    this.ebsAllocator = new EBSAllocator(this.client);
   }
 
   public AmazonEC2Client getClient() {
@@ -450,6 +599,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
   public AmazonIdentityManagementClient getIdentityManagementClient() {
     return identityManagementClient;
+  }
+
+  public AWSKMSClient getKmsClient() {
+    return kmsClient;
   }
 
   /**
@@ -502,13 +655,160 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   }
 
   @Override
-  public void allocate(EC2InstanceTemplate template, Collection<String> virtualInstanceIds,
-      int minCount) throws InterruptedException {
+  public void allocate(EC2InstanceTemplate template, Collection<String> virtualInstanceIds, int minCount)
+    throws InterruptedException {
+
+    Collection<String> allocatedVirtualInstanceIds;
     if (template.isUseSpotInstances()) {
-      allocateSpotInstances(template, virtualInstanceIds, minCount);
+      allocatedVirtualInstanceIds = allocateSpotInstances(template, virtualInstanceIds, minCount);
     } else {
-      allocateOnDemandInstances(template, virtualInstanceIds, minCount);
+      allocatedVirtualInstanceIds = allocateOnDemandInstances(template, virtualInstanceIds, minCount);
     }
+
+    if (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_SEPARATE_REQUESTS) {
+      if (allocatedVirtualInstanceIds.size() > 0) {
+        LOG.info(">> Allocating EBS volumes");
+        allocateEbsVolumes(template, allocatedVirtualInstanceIds, minCount);
+      } else {
+        LOG.info(">> Skipping EBS volume allocation since no instances were allocated");
+      }
+    }
+  }
+
+  /**
+   * Creates and attaches EBS volumes to EC2 instances. This expects that the instances
+   * have already been allocated. Instances that could not acquire the correct number of
+   * EBS volumes will be terminated along with any leftover volumes. If the minimum
+   * number of instances could not acquire EBS volumes, all the specified instances and
+   * leftover volumes will be terminated.
+   *
+   * @param template the EC2 instance template that contains EBS configurations
+   * @param virtualInstanceIds list of virtual instance to attach volumes to.
+   * @param minCount the minimum number of instances that need EBS volumes attached
+   * @throws InterruptedException
+   */
+  private void allocateEbsVolumes(EC2InstanceTemplate template, Collection<String> virtualInstanceIds, int minCount)
+    throws InterruptedException {
+    BiMap<String, String> instanceIdPairs = getEC2InstanceIdsByVirtualInstanceId(virtualInstanceIds);
+
+    List<InstanceEbsVolumes> instanceVolumes = ebsAllocator.createVolumes(template, instanceIdPairs);
+    instanceVolumes = ebsAllocator.waitUntilVolumesAvailable(instanceVolumes);
+    instanceVolumes = ebsAllocator.attachAndTagVolumes(template, instanceVolumes, getUserDefinedTags(template));
+    ebsAllocator.addDeleteOnTerminationFlag(instanceVolumes);
+
+    int successfulInstances = getSuccessfulInstanceCount(instanceVolumes);
+    LOG.info("{} out of {} instances successfully acquired EBS volumes",
+        successfulInstances, virtualInstanceIds.size());
+
+    if (successfulInstances < minCount) {
+      LOG.warn("A minimum number of {} instances could not acquire EBS volumes, cleaning up by " +
+          "deleting all allocated instances and volumes", minCount);
+      deleteAllInstancesAndVolumes(instanceVolumes, template, ebsAllocator);
+      return;
+    }
+    deleteFailedInstancesAndVolumes(instanceVolumes, template, ebsAllocator);
+  }
+
+  /**
+   * Terminates failed instances and their associated volumes. In this case a failed
+   * instance is any instance that doesn't have all their volumes as ATTACHED.
+   */
+  private void deleteFailedInstancesAndVolumes(List<InstanceEbsVolumes> instanceEbsVolumesList,
+      EC2InstanceTemplate template, EBSAllocator ebsAllocator) throws InterruptedException {
+
+    Set<String> instancesToTerminate = Sets.newHashSet();
+
+    nextInstanceVolume:
+    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      for (InstanceEbsVolumes.Status status : instanceEbsVolumes.getVolumeStatuses().values()) {
+        if (status != InstanceEbsVolumes.Status.ATTACHED) {
+          deleteCreatedVolumes(instanceEbsVolumes, ebsAllocator);
+          instancesToTerminate.add(instanceEbsVolumes.getVirtualInstanceId());
+          continue nextInstanceVolume;
+        }
+      }
+    }
+    delete(template, instancesToTerminate);
+  }
+
+
+  /**
+   * Terminates a list of instances and deletes their associated volumes.
+   */
+  private void deleteAllInstancesAndVolumes(List<InstanceEbsVolumes> instanceEbsVolumesList,
+      EC2InstanceTemplate template, EBSAllocator ebsAllocator) throws InterruptedException {
+
+    Set<String> instancesToTerminate = Sets.newHashSet();
+
+    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      deleteCreatedVolumes(instanceEbsVolumes, ebsAllocator);
+      instancesToTerminate.add(instanceEbsVolumes.getVirtualInstanceId());
+    }
+    delete(template, instancesToTerminate);
+  }
+
+  private void deleteCreatedVolumes(InstanceEbsVolumes instanceEbsVolumes, EBSAllocator ebsAllocator) {
+    Set<String> volumesToDelete = Sets.newHashSet();
+    for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
+      if (!volumeId.startsWith(InstanceEbsVolumes.UNCREATED_VOLUME_ID)) {
+        volumesToDelete.add(volumeId);
+      }
+    }
+    ebsAllocator.deleteVolumes(volumesToDelete);
+  }
+
+  /**
+   * Get the number of instances that have successfully acquired volumes. Success means
+   * that all volumes associated with an instance are in the ATTACHED state.
+   */
+  private int getSuccessfulInstanceCount(List<InstanceEbsVolumes> instanceEbsVolumesList) {
+    int count = 0;
+    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      boolean success = true;
+      for (InstanceEbsVolumes.Status status : instanceEbsVolumes.getVolumeStatuses().values()) {
+        if (status != InstanceEbsVolumes.Status.ATTACHED) {
+          success = false;
+          break;
+        }
+      }
+      if (success) count++;
+    }
+    return count;
+  }
+
+  /**
+   * Get EBS volumes attached to the specified virtual instance id.
+   *
+   * @return list of ebs volumes
+   */
+  @VisibleForTesting
+  List<Volume> getVolumes(String virtualInstanceId) {
+    String ec2InstanceId = getOnlyElement(
+      getEC2InstanceIdsByVirtualInstanceId(
+        Collections.singletonList(virtualInstanceId)
+      ).values()
+    );
+
+    DescribeInstanceAttributeResult results = client.describeInstanceAttribute(
+      new DescribeInstanceAttributeRequest()
+        .withInstanceId(ec2InstanceId)
+        .withAttribute(InstanceAttributeName.BlockDeviceMapping)
+    );
+
+    List<InstanceBlockDeviceMapping> blockDeviceMappings = results
+      .getInstanceAttribute()
+      .getBlockDeviceMappings();
+
+    List<String> volumeIds = Lists.newArrayList();
+    for (InstanceBlockDeviceMapping mapping : blockDeviceMappings) {
+      volumeIds.add(mapping.getEbs().getVolumeId());
+    }
+
+    DescribeVolumesResult volumeResults = client.describeVolumes(
+      new DescribeVolumesRequest().withVolumeIds(volumeIds)
+    );
+
+    return volumeResults.getVolumes();
   }
 
   @Override
@@ -632,10 +932,18 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     String publicKeyFingerprint = getMd5Fingerprint(publicKey);
     String keyName = lookupKeyName(privateKeyFingerprint, publicKeyFingerprint);
     if (keyName == null) {
-      throw new IllegalArgumentException("No private key in EC2 matches the fingerprint " +
-          privateKeyFingerprint);
+      if (importKeyPairIfMissing) {
+        keyName = PUBLIC_KEY_PREFIX + publicKeyFingerprint;
+        LOG.info("KeyPair not found. Adding public key to EC2 with key name : {}", keyName);
+        client.importKeyPair(new ImportKeyPairRequest().withKeyName(keyName).withPublicKeyMaterial(
+          BaseEncoding.base64().encode(publicKey.getEncoded())));
+      } else {
+        throw new IllegalArgumentException("No private key in EC2 matches the fingerprint " +
+                    privateKeyFingerprint);
+      }
+    } else {
+      LOG.info("Found EC2 key name {} for fingerprint", keyName);
     }
-    LOG.info("Found EC2 key name {} for fingerprint", keyName);
     Map<String, String> configMap =
         Maps.newHashMap(configuration.getConfiguration(templateLocalizationContext));
     configMap.put(KEY_NAME.unwrap().getConfigKey(),
@@ -719,10 +1027,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * @param virtualInstanceIds the unique identifiers for the instances
    * @param minCount           the minimum number of instances to allocate if not all resources can
    *                           be allocated
+   * @return                   the virtual instance ids of the instances that were allocated
    * @throws InterruptedException if the operation is interrupted
    */
-  public void allocateOnDemandInstances(EC2InstanceTemplate template,
-      Collection<String> virtualInstanceIds, int minCount) throws InterruptedException {
+  public Collection<String> allocateOnDemandInstances(EC2InstanceTemplate template,
+                                                      Collection<String> virtualInstanceIds, int minCount)
+    throws InterruptedException {
+
     int instanceCount = virtualInstanceIds.size();
 
     LOG.info(">> Requesting {} instances for {}", instanceCount, template);
@@ -738,7 +1049,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     } catch (AmazonServiceException e) {
       if (minCount == 0 && "InsufficientInstanceCapacity".equals(e.getErrorCode())) {
         LOG.warn("Ignoring insufficient capacity exception due to min count being zero", e);
-        return;
+        return Collections.emptyList();
       } else {
         throw e;
       }
@@ -760,12 +1071,12 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     // Limit the number of virtual instance id's used for tagging to the
     // number of instances that we managed to reserve.
-    List<String> reducedVirtualInstanceIds = FluentIterable
+    List<String> virtualInstanceIdsAllocated = FluentIterable
       .from(virtualInstanceIds)
       .limit(instances.size())
       .toList();
 
-    for (Map.Entry<String, Instance> entry : zipWith(reducedVirtualInstanceIds, instances)) {
+    for (Map.Entry<String, Instance> entry : zipWith(virtualInstanceIdsAllocated, instances)) {
 
       String virtualInstanceId = entry.getKey();
       Instance instance = entry.getValue();
@@ -782,6 +1093,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     // Wait until all of them have a private IP (it should be pretty fast)
     waitForPrivateIpAddresses(instancesWithNoPrivateIp);
+
+    return virtualInstanceIdsAllocated;
   }
 
   /**
@@ -800,9 +1113,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * @param virtualInstanceIds the unique identifiers for the instances
    * @param minCount           the minimum number of instances to allocate if not all resources can
    *                           be allocated
+   * @return                   virtual instance ids that were allocated
    * @throws InterruptedException if the operation is interrupted
    */
-  public void allocateSpotInstances(EC2InstanceTemplate template,
+  public Collection<String> allocateSpotInstances(EC2InstanceTemplate template,
       Collection<String> virtualInstanceIds, int minCount) throws InterruptedException {
 
     // TODO add configurable duration
@@ -815,7 +1129,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     SpotGroupAllocator spotGroupAllocator =
         new SpotGroupAllocator(
             template, virtualInstanceIds, minCount, requestExpirationTime, priceChangeDeadline);
-    spotGroupAllocator.allocate();
+    return spotGroupAllocator.allocate();
   }
 
   /**
@@ -884,7 +1198,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
   /**
    * Tags an EC2 instance. Expects that the instance already exists or is in the process of
-   * being created.
+   * being created. This may also tag EBS volumes depending on template configurations.
    *
    * @param template          the instance template
    * @param userDefinedTags   the user-defined tags
@@ -894,7 +1208,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    */
   private void tagInstance(EC2InstanceTemplate template, List<Tag> userDefinedTags,
       String virtualInstanceId, String ec2InstanceId) throws InterruptedException {
-    LOG.info(">> Tagging {} / {}", ec2InstanceId, virtualInstanceId);
+    LOG.info(">> Tagging instance {} / {}", ec2InstanceId, virtualInstanceId);
     List<Tag> tags = Lists.newArrayList(
         new Tag(InstanceTags.INSTANCE_NAME, String.format("%s-%s",
             template.getInstanceNamePrefix(), virtualInstanceId)),
@@ -908,6 +1222,19 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       TimeUnit.SECONDS.sleep(5);
     }
     client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
+
+    // Tag EBS volumes if they were part of instance launch request
+    if (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST) {
+      DescribeInstancesResult result = client.describeInstances(
+          new DescribeInstancesRequest().withInstanceIds(Collections.singletonList(ec2InstanceId))
+      );
+      List<InstanceBlockDeviceMapping> instanceBlockDeviceMappings =
+          getOnlyElement(getOnlyElement(result.getReservations()).getInstances()).getBlockDeviceMappings();
+      for (InstanceBlockDeviceMapping instanceBlockDeviceMapping : instanceBlockDeviceMappings) {
+        String volumeId = instanceBlockDeviceMapping.getEbs().getVolumeId();
+        ebsAllocator.tagVolume(template, userDefinedTags, virtualInstanceId, volumeId);
+      }
+    }
   }
 
   /**
@@ -1011,20 +1338,43 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     return network;
   }
 
+  private static final String DEVICE_TYPE_EBS = "ebs";
+
   /**
    * Creates block device mappings based on the specified instance template.
    *
    * @param template the instance template
    * @return the block device mappings
    */
-  @SuppressWarnings("ConstantConditions")
   private List<BlockDeviceMapping> getBlockDeviceMappings(EC2InstanceTemplate template) {
 
     // Query the AMI about the root device name & mapping information
     DescribeImagesResult result = client.describeImages(
         new DescribeImagesRequest().withImageIds(template.getImage()));
-    BlockDeviceMapping rootDevice = getFirst(getFirst(result.getImages(), null)
-        .getBlockDeviceMappings(), null);
+    if (result.getImages().isEmpty()) {
+      throw new IllegalArgumentException("The description for image " + template.getImage() +
+                                         " is empty");
+    }
+    Image templateImage = result.getImages().get(0);
+    String rootDeviceType = templateImage.getRootDeviceType();
+    if (!DEVICE_TYPE_EBS.equals(rootDeviceType)) {
+      throw new IllegalArgumentException("The root device for image " + template.getImage() +
+                                         " must be \"" + DEVICE_TYPE_EBS + "\", found: " +
+                                         rootDeviceType);
+    }
+    List<BlockDeviceMapping> originalMappings = templateImage.getBlockDeviceMappings();
+    LOG.info(">> Original image block device mappings: {}", originalMappings);
+    if (originalMappings.isEmpty()) {
+      throw new IllegalArgumentException("The image " + template.getImage() +
+                                         " has no block device mappings");
+    }
+    BlockDeviceMapping rootDevice = selectRootDevice(originalMappings,
+                                                     templateImage.getRootDeviceName());
+    if (rootDevice == null) {
+      throw new IllegalArgumentException("Could not determine root device for image " +
+                                         template.getImage() + " based on root device name " +
+                                         templateImage.getRootDeviceName());
+    }
 
     // The encrypted property was added to the block device mapping in version 1.8 of the SDK.
     // It is a Boolean, but defaults to false instead of being unset, so we set it to null here.
@@ -1035,10 +1385,102 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     List<BlockDeviceMapping> deviceMappings = Lists.newArrayList(rootDevice);
 
-    deviceMappings.addAll(ephemeralDeviceMappings.apply(template.getType()));
+    int ebsVolumeCount = template.getEbsVolumeCount();
+
+    EBSAllocationStrategy ebsAllocationStrategy = EBSAllocationStrategy.get(template);
+
+    switch (ebsAllocationStrategy) {
+      case NO_EBS_VOLUMES:
+        // The volumes within an instance should be homogeneous. So we only add
+        // instance store volumes when additional EBS volumes aren't mounted.
+        deviceMappings.addAll(ephemeralDeviceMappings.apply(template.getType()));
+        break;
+      case AS_INSTANCE_REQUEST:
+        LOG.info("EBS volumes will be allocated as part of instance launch request");
+        List<BlockDeviceMapping> ebsDeviceMappings = getEbsBlockDeviceMapping(ebsVolumeCount,
+            template.getEbsVolumeType(), template.getEbsVolumeSizeGiB(), template.isEnableEbsEncryption());
+        deviceMappings.addAll(ebsDeviceMappings);
+        break;
+      case AS_SEPARATE_REQUESTS:
+        LOG.info("EBS volumes will be separately allocated after instance launch request");
+        break;
+      default:
+        throw new IllegalStateException("Invalid EBS allocation strategy " + ebsAllocationStrategy);
+    }
 
     LOG.info(">> Block device mappings: {}", deviceMappings);
     return deviceMappings;
+  }
+
+  private List<BlockDeviceMapping> getEbsBlockDeviceMapping(int count, String volumeType,
+                                                            int volumeSizeGib, boolean enableEncryption) {
+    List<String> deviceNames = ebsAllocator.getEbsDeviceNames(count);
+    List<BlockDeviceMapping> mappings = Lists.newArrayList();
+
+    for (String deviceName : deviceNames) {
+      EbsBlockDevice ebs = new EbsBlockDevice()
+          .withVolumeType(volumeType)
+          .withVolumeSize(volumeSizeGib)
+          .withEncrypted(enableEncryption)
+          .withDeleteOnTermination(true);
+
+      BlockDeviceMapping mapping = new BlockDeviceMapping()
+          .withDeviceName(deviceName)
+          .withEbs(ebs);
+
+      mappings.add(mapping);
+    }
+    return mappings;
+  }
+
+  /**
+   * Selects the root device from a list of block device mappings based on the
+   * root device name for the mappings' image.
+   *
+   * @param mappings list of block device mappings
+   * @param rootDeviceName image root device name
+   * @return root device mapping, or null if it could not be determined
+   */
+  @VisibleForTesting
+  static BlockDeviceMapping selectRootDevice(List<BlockDeviceMapping> mappings,
+                                             String rootDeviceName) {
+    /*
+     * Heuristic to find the root device:
+     * - The best match is the EBS device that matches the root device name for the image, but
+     *   this may not happen (/dev/sda1 vs. /dev/sda). See:
+     *   http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/device_naming.html
+     * - If there isn't a best match, then a device whose name is a prefix for the image's root
+     *   device name is selected.
+     * - If all else fails, it's the first EBS volume in the list.
+     */
+    BlockDeviceMapping bestMatch = null;
+    BlockDeviceMapping firstEbs = null;
+    for (BlockDeviceMapping mapping : mappings) {
+      if (mapping.getEbs() == null) {
+        continue;
+      }
+      if (firstEbs == null) {
+        firstEbs = mapping;
+      }
+      if (mapping.getDeviceName() == null) {
+        continue;
+      }
+      if (rootDeviceName.equals(mapping.getDeviceName())) {
+        return mapping;
+      }
+      if (rootDeviceName.startsWith(mapping.getDeviceName())) {
+        bestMatch = mapping;
+      }
+    }
+
+    if (bestMatch != null) {
+      return bestMatch;
+    } else if (firstEbs != null) {
+      return firstEbs;
+    } else {
+      return null;
+    }
+
   }
 
   /**
@@ -1427,7 +1869,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
      * @throws InterruptedException if the operation is interrupted
      */
     @VisibleForTesting
-    protected void allocate() throws InterruptedException {
+    protected Collection<String> allocate() throws InterruptedException {
 
       int expectedInstanceCount = virtualInstanceIds.size();
 
@@ -1492,6 +1934,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             waitForPrivateIpAddresses();
 
             success = true;
+            return getVirtualInstanceIdsAllocated();
           }
         } finally {
           try {
@@ -1520,6 +1963,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         throw new UnrecoverableProviderException("Problem allocating Spot instances.",
             pluginExceptionDetails);
       }
+
+      return Collections.emptyList();
     }
 
     /**
@@ -1975,6 +2420,21 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       }
 
       EC2Provider.this.waitForPrivateIpAddresses(ec2InstanceIds);
+    }
+
+    private Collection<String> getVirtualInstanceIdsAllocated() {
+      Set<String> virtualInstanceIds = Sets.newHashSet();
+
+      for (Map.Entry<String,SpotAllocationRecord> entry : spotAllocationRecordsByVirtualInstanceId.entrySet()) {
+        String virtualInstanceId = entry.getKey();
+        SpotAllocationRecord spotAllocationRecord = entry.getValue();
+
+        String ec2InstanceId = spotAllocationRecord.ec2InstanceId;
+        if (ec2InstanceId != null) {
+          virtualInstanceIds.add(virtualInstanceId);
+        }
+      }
+      return virtualInstanceIds;
     }
 
     /**

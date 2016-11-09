@@ -21,11 +21,13 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.ENGINE_VERSION;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.INSTANCE_CLASS;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.MULTI_AZ;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.ALLOCATED_STORAGE_TOO_LARGE;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.ALLOCATED_STORAGE_TOO_SMALL;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.AVAILABILITY_ZONE_NOT_ALLOWED_FOR_MULTI_AZ;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.DB_SUBNET_GROUP_NOT_FOUND;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.ENCRYPTION_NOT_SUPPORTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.INSTANCE_ALREADY_EXISTS;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.INVALID_ALLOCATED_STORAGE_FORMAT_MSG;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.INVALID_DB_SUBNET_GROUP;
@@ -83,6 +85,7 @@ public class RDSInstanceTemplateConfigurationValidatorTest {
   private static final String TEST_ENGINE_VERSION = "5.5.39b";
 
   private RDSProvider rdsProvider;
+  private RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses;
   private RDSInstanceTemplateConfigurationValidator validator;
   private AmazonRDSClient rdsClient;
   private PluginExceptionConditionAccumulator accumulator;
@@ -94,7 +97,9 @@ public class RDSInstanceTemplateConfigurationValidatorTest {
     rdsClient = mock(AmazonRDSClient.class);
     rdsProvider = mock(RDSProvider.class);
     when(rdsProvider.getClient()).thenReturn(rdsClient);
-    validator = new RDSInstanceTemplateConfigurationValidator(rdsProvider);
+    rdsEncryptionInstanceClasses = mock(RDSEncryptionInstanceClasses.class);
+    validator = new RDSInstanceTemplateConfigurationValidator(rdsProvider,
+                                                              rdsEncryptionInstanceClasses);
     accumulator = new PluginExceptionConditionAccumulator();
   }
 
@@ -305,6 +310,32 @@ public class RDSInstanceTemplateConfigurationValidatorTest {
     validator.checkMultiAz(rdsClient, configuration, accumulator, localizationContext);
 
     verifySingleError(AVAILABILITY_ZONE, AVAILABILITY_ZONE_NOT_ALLOWED_FOR_MULTI_AZ, "us-east-1");
+  }
+
+  @Test
+  public void testCheckStorageEncryption_Pass() {
+    Map<String, String> configMap = Maps.newHashMap();
+    configMap.put(INSTANCE_CLASS.unwrap().getConfigKey(), "db.x1.large");
+    configMap.put(STORAGE_ENCRYPTED.unwrap().getConfigKey(), "true");
+    Configured configuration = new SimpleConfiguration(configMap);
+
+    when(rdsEncryptionInstanceClasses.apply("db.x1.large")).thenReturn(Boolean.TRUE);
+
+    validator.checkStorageEncryption(configuration, accumulator, localizationContext);
+    verifyClean();
+  }
+
+  @Test
+  public void testCheckStorageEncryption_Fail() {
+    Map<String, String> configMap = Maps.newHashMap();
+    configMap.put(INSTANCE_CLASS.unwrap().getConfigKey(), "db.x1.large");
+    configMap.put(STORAGE_ENCRYPTED.unwrap().getConfigKey(), "true");
+    Configured configuration = new SimpleConfiguration(configMap);
+
+    when(rdsEncryptionInstanceClasses.apply("db.x1.large")).thenReturn(Boolean.FALSE);
+
+    validator.checkStorageEncryption(configuration, accumulator, localizationContext);
+    verifySingleError(STORAGE_ENCRYPTED, ENCRYPTION_NOT_SUPPORTED, "db.x1.large");
   }
 
   /**

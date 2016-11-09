@@ -15,6 +15,11 @@
 package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IAM_PROFILE_NAME;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
@@ -40,17 +45,28 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationVali
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_AMI_PLATFORM_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_AMI_PLATFORM_SPOT_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_AMI_ROOT_DEVICE_TYPE_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_COUNT_FORMAT_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_ENCRYPTION_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_COUNT_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_SIZE_FORMAT_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_IAM_PROFILE_NAME_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_KMS_NOT_FOUND_MESSAGE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_KMS_WHEN_ENCRYPTION_DISABLED_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.MAX_VOLUMES_PER_INSTANCE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.MIN_ROOT_VOLUME_SIZE_GB;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.PARAVIRTUAL_VIRTUALIZATION;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.ROOT_VOLUME_TYPES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.VOLUME_SIZE_NOT_IN_RANGE_MSG;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.cloudera.director.aws.AWSFilters;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata.EbsVolumeMetadata;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2Client;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.AvailabilityZone;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeAvailabilityZonesRequest;
@@ -76,6 +92,9 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagemen
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.model.GetInstanceProfileResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.model.NoSuchEntityException;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.AWSKMSClient;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.model.DescribeKeyRequest;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.model.NotFoundException;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
@@ -114,9 +133,11 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
   private static final String INVALID_SPOT_OWNER_ID = "invalidSpotOwner";
 
   private EC2Provider ec2Provider;
+  private EBSMetadata ebsMetadata;
   private VirtualizationMappings virtualizationMappings;
   private EC2InstanceTemplateConfigurationValidator validator;
   private AmazonEC2Client ec2Client;
+  private AWSKMSClient kmsClient;
   private PluginExceptionConditionAccumulator accumulator;
   private LocalizationContext localizationContext =
       new DefaultLocalizationContext(Locale.getDefault(), "");
@@ -124,13 +145,15 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
   @Before
   public void setUp() {
     virtualizationMappings = mock(VirtualizationMappings.class);
+    ebsMetadata = mock(EBSMetadata.class);
     AWSFilters ec2Filters = mockEC2Filters();
     ec2Client = mock(AmazonEC2Client.class);
     ec2Provider = mock(EC2Provider.class);
+    kmsClient = mock(AWSKMSClient.class);
     when(ec2Provider.getClient()).thenReturn(ec2Client);
     when(ec2Provider.getVirtualizationMappings()).thenReturn(virtualizationMappings);
     when(ec2Provider.getEC2Filters()).thenReturn(ec2Filters);
-    validator = new EC2InstanceTemplateConfigurationValidator(ec2Provider);
+    validator = new EC2InstanceTemplateConfigurationValidator(ec2Provider, ebsMetadata);
     accumulator = new PluginExceptionConditionAccumulator();
   }
 
@@ -685,6 +708,118 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     verifySingleError(SPOT_BID_USD_PER_HR);
   }
 
+  @Test
+  public void testValidateEbsVolume() {
+    String volumeType = "st1";
+    String volumeCount = "2";
+    String volumeSize = "800";
+    String enableEncryption = "true";
+
+    int minAllowedSize = 500;
+    int maxAllowedSize = 16384;
+    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
+    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+
+    checkEbsVolume(volumeType, volumeCount, volumeSize, enableEncryption, Optional.<String>absent());
+    verifyClean();
+  }
+
+  @Test
+  public void testValidateEbsVolumeCount_NotNumber() {
+    String volumeCount = "not a number";
+    checkEbsVolume("st1", volumeCount, "500", "false", Optional.<String>absent());
+    verifySingleError(EBS_VOLUME_COUNT, INVALID_EBS_VOLUME_COUNT_FORMAT_MSG, volumeCount);
+  }
+
+  @Test
+  public void testValidateEbsVolumeCount_Negative() {
+    String volumeCount = "-1";
+    checkEbsVolume("st1", volumeCount, "500", "false", Optional.<String>absent());
+    verifySingleError(EBS_VOLUME_COUNT, INVALID_EBS_VOLUME_COUNT_MSG, MAX_VOLUMES_PER_INSTANCE);
+  }
+
+  @Test
+  public void testValidateEbsVolumeCount_AboveMax() {
+    String volumeCount = Integer.toString(MAX_VOLUMES_PER_INSTANCE + 1);
+    checkEbsVolume("st1", volumeCount, "500", "false", Optional.<String>absent());
+    verifySingleError(EBS_VOLUME_COUNT, INVALID_EBS_VOLUME_COUNT_MSG, MAX_VOLUMES_PER_INSTANCE);
+  }
+
+  @Test
+  public void testValidateEbsVolumeSize_NotNumber() {
+    String volumeType = "st1";
+    String volumeSize = "not a number";
+    checkEbsVolume(volumeType, "2", volumeSize, "false", Optional.<String>absent());
+    verifySingleError(EBS_VOLUME_SIZE_GIB, INVALID_EBS_VOLUME_SIZE_FORMAT_MSG, volumeSize);
+  }
+
+  @Test
+  public void testValidateEbsVolumeSize_BelowMin() {
+    String volumeType = "st1";
+
+    int minAllowedSize = 500;
+    int maxAllowedSize = 16384;
+    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
+    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+
+    String volumeSize = Integer.toString(minAllowedSize - 1);
+    checkEbsVolume(volumeType, "2", volumeSize, "false", Optional.<String>absent());
+    verifySingleError(EBS_VOLUME_SIZE_GIB, VOLUME_SIZE_NOT_IN_RANGE_MSG, volumeType, minAllowedSize, maxAllowedSize);
+  }
+
+  @Test
+  public void testValidateEbsVolumeSize_AboveMax() {
+    String volumeType = "st1";
+
+    int minAllowedSize = 500;
+    int maxAllowedSize = 16384;
+    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
+    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+
+    String volumeSize = Integer.toString(maxAllowedSize + 1);
+    checkEbsVolume(volumeType, "2", volumeSize, "false", Optional.<String>absent());
+    verifySingleError(EBS_VOLUME_SIZE_GIB, VOLUME_SIZE_NOT_IN_RANGE_MSG, volumeType, minAllowedSize, maxAllowedSize);
+  }
+
+  @Test
+  public void testValidateEbsEncryptionFlag_InvalidCount() {
+    checkEbsVolume("st1", "0", "500", "true", Optional.<String>absent());
+    verifySingleError(ENCRYPT_ADDITIONAL_EBS_VOLUMES, INVALID_EBS_ENCRYPTION_MSG);
+  }
+
+  @Test
+  public void testValidateEbsKms_InvalidCount() {
+    checkEbsVolume("st1", "0", "500", "false", Optional.of("some-kms-key"));
+    verifySingleError(EBS_KMS_KEY_ID, INVALID_EBS_ENCRYPTION_MSG);
+  }
+
+  @Test
+  public void testValidateEbsKms_KeyNotFound() {
+    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata("st1", 1, 1000);
+    when(ebsMetadata.apply(anyString())).thenReturn(ebsVolumeMetadata);
+
+    when(kmsClient.describeKey(any(DescribeKeyRequest.class))).thenThrow(new NotFoundException(""));
+
+    checkEbsVolume("st1", "1", "500", "true", Optional.of("invalid-key"));
+    verifySingleError(EBS_KMS_KEY_ID, INVALID_KMS_NOT_FOUND_MESSAGE);
+  }
+
+  protected void checkEbsVolume(String ebsVolumeType, String ebsVolumeCount,
+                                String ebsVolumeSizeGib, String enableEncryption, Optional<String> ebsKmsKeyId) {
+    Map<String, String> configMap = Maps.newHashMap();
+    configMap.put(EBS_VOLUME_TYPE.unwrap().getConfigKey(), ebsVolumeType);
+    configMap.put(EBS_VOLUME_COUNT.unwrap().getConfigKey(), ebsVolumeCount);
+    configMap.put(EBS_VOLUME_SIZE_GIB.unwrap().getConfigKey(), ebsVolumeSizeGib);
+    configMap.put(ENCRYPT_ADDITIONAL_EBS_VOLUMES.unwrap().getConfigKey(), enableEncryption);
+
+    if (ebsKmsKeyId.isPresent()) {
+      configMap.put(EBS_KMS_KEY_ID.unwrap().getConfigKey(), ebsKmsKeyId.get());
+    }
+
+    Configured configuration = new SimpleConfiguration(configMap);
+    validator.checkEbsVolumes(kmsClient, configuration, accumulator, localizationContext);
+  }
+
   /**
    * Invokes checkImage with the specified configuration.
    *
@@ -888,7 +1023,7 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
         accumulator.getConditionsByKey();
     assertThat(conditionsByKey).hasSize(1);
     String configKey = token.unwrap().getConfigKey();
-    assertThat(conditionsByKey.containsKey(configKey)).isTrue();
+    assertThat(conditionsByKey).containsKey(configKey);
     Collection<PluginExceptionCondition> keyConditions = conditionsByKey.get(configKey);
     assertThat(keyConditions).hasSize(1);
     PluginExceptionCondition condition = keyConditions.iterator().next();

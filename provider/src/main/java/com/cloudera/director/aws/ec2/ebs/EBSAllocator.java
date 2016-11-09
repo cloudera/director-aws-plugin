@@ -1,0 +1,581 @@
+// (c) Copyright 2016 Cloudera, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package com.cloudera.director.aws.ec2.ebs;
+
+import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
+import static com.google.common.base.Preconditions.checkState;
+
+import com.amazonaws.AmazonServiceException;
+import com.amazonaws.services.ec2.AmazonEC2Client;
+import com.amazonaws.services.ec2.model.AttachVolumeRequest;
+import com.amazonaws.services.ec2.model.CreateTagsRequest;
+import com.amazonaws.services.ec2.model.CreateVolumeRequest;
+import com.amazonaws.services.ec2.model.CreateVolumeResult;
+import com.amazonaws.services.ec2.model.DeleteVolumeRequest;
+import com.amazonaws.services.ec2.model.DescribeInstanceAttributeRequest;
+import com.amazonaws.services.ec2.model.DescribeSubnetsRequest;
+import com.amazonaws.services.ec2.model.DescribeSubnetsResult;
+import com.amazonaws.services.ec2.model.DescribeVolumesRequest;
+import com.amazonaws.services.ec2.model.EbsInstanceBlockDeviceSpecification;
+import com.amazonaws.services.ec2.model.InstanceAttributeName;
+import com.amazonaws.services.ec2.model.InstanceBlockDeviceMapping;
+import com.amazonaws.services.ec2.model.InstanceBlockDeviceMappingSpecification;
+import com.amazonaws.services.ec2.model.ModifyInstanceAttributeRequest;
+import com.amazonaws.services.ec2.model.Subnet;
+import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.ec2.model.Volume;
+import com.amazonaws.services.ec2.model.VolumeAttachment;
+import com.amazonaws.services.ec2.model.VolumeAttachmentState;
+import com.amazonaws.services.ec2.model.VolumeState;
+import com.cloudera.director.aws.Tags;
+import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Optional;
+import com.google.common.base.Stopwatch;
+import com.google.common.collect.BiMap;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Iterables;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+
+import java.util.Collection;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+/**
+ * Provides functionality to create and attach EBS volumes.
+ */
+public class EBSAllocator {
+
+  private static final Logger LOG = LoggerFactory.getLogger(EBSAllocator.class);
+
+  private static final long WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS = 5;
+  private static final long WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS = 5;
+  private static final int TIME_OUT_UNTIL_AVAILABLE_SECONDS = 180;
+  private static final int TIME_OUT_UNTIL_ATTACHED_SECONDS = 180;
+
+  private static final String INVALID_STATE_MISSING_KMS_KEY =
+      "EBS volumes should only be separately created when they need to be encrypted with a user specified KMS key";
+
+  @VisibleForTesting
+  static final String DEVICE_NAME_START_PREFIX = "/dev/sd";
+
+  @VisibleForTesting
+  static final char DEVICE_NAME_START_CHAR = 'f';
+
+  private final AmazonEC2Client client;
+
+  /**
+   * Construct a new EBS allocator instance.
+   *
+   * @param client a pre-configured ec2 client
+   */
+  public EBSAllocator(AmazonEC2Client client) {
+    this.client = checkNotNull(client, "ec2 client is null");
+  }
+
+  /**
+   * Represents an instance along with the EBS volumes associated with it.
+   */
+  public static class InstanceEbsVolumes {
+
+    public static final String UNCREATED_VOLUME_ID = "uncreated";
+
+    private final String virtualInstanceId;
+    private final String ec2InstanceId;
+    private final Map<String, Status> volumeStatuses;
+
+    public enum Status {
+      CREATED,
+      AVAILABLE,
+      ATTACHED,
+      FAILED
+    }
+
+    /**
+     * Constructor.
+     *
+     * @param virtualInstanceId the Director virtual instance id
+     * @param ec2InstanceId the AWS EC2 instance id
+     * @param volumeStatuses the volume ids for each instance along with the status of the volume
+     */
+    public InstanceEbsVolumes(String virtualInstanceId, String ec2InstanceId, Map<String, Status> volumeStatuses) {
+      this.virtualInstanceId = requireNonNull(virtualInstanceId, "virtualInstanceId is null");
+      this.ec2InstanceId = requireNonNull(ec2InstanceId, "ec2InstanceId is null");
+      this.volumeStatuses = ImmutableMap.copyOf(volumeStatuses);
+    }
+
+    public String getVirtualInstanceId() {
+      return virtualInstanceId;
+    }
+
+    public String getEc2InstanceId() {
+      return ec2InstanceId;
+    }
+
+    public Map<String, Status> getVolumeStatuses() {
+      return volumeStatuses;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if (this == o) return true;
+      if (o == null || getClass() != o.getClass()) return false;
+
+      InstanceEbsVolumes that = (InstanceEbsVolumes) o;
+
+      if (!virtualInstanceId.equals(that.virtualInstanceId)) return false;
+      if (!ec2InstanceId.equals(that.ec2InstanceId)) return false;
+      return volumeStatuses.equals(that.volumeStatuses);
+
+    }
+
+    @Override
+    public int hashCode() {
+      int result = virtualInstanceId.hashCode();
+      result = 31 * result + ec2InstanceId.hashCode();
+      result = 31 * result + volumeStatuses.hashCode();
+      return result;
+    }
+
+    @Override
+    public String toString() {
+      return "InstanceEbsVolumes{" +
+          "virtualInstanceId='" + virtualInstanceId + '\'' +
+          ", ec2InstanceId='" + ec2InstanceId + '\'' +
+          ", volumeStatuses=" + volumeStatuses +
+          '}';
+    }
+  }
+
+  /**
+   * Runs create volume requests for each instance. The number and type
+   * of volumes to create are taken from the instance template.
+   *
+   * @param template the instance template
+   * @param ec2InstanceIdsByVirtualInstanceId ids of the instances where the key is the virtual
+   *                                          instance id and the value is the ec2 instance id
+   * @return a list of InstanceEbsVolumes
+   */
+  public List<InstanceEbsVolumes> createVolumes(EC2InstanceTemplate template,
+                                                BiMap<String, String> ec2InstanceIdsByVirtualInstanceId) {
+    checkState(template.getEbsKmsKeyId().isPresent(), INVALID_STATE_MISSING_KMS_KEY);
+
+    Optional<String> templateAvailabilityZone = template.getAvailabilityZone();
+
+    String availabilityZone = templateAvailabilityZone.isPresent() ?
+      templateAvailabilityZone.get() :
+      getAvailabilityZoneFromSubnetId(template.getSubnetId());
+
+    int volumesPerInstance = template.getEbsVolumeCount();
+    LOG.info("Requesting {} volumes each for {} instances",
+        volumesPerInstance, ec2InstanceIdsByVirtualInstanceId.size());
+
+    int uncreatedVolumeCount = 0;
+
+    List<InstanceEbsVolumes> instanceEbsVolumesList = Lists.newArrayList();
+    for (Map.Entry<String, String> entry : ec2InstanceIdsByVirtualInstanceId.entrySet()) {
+      String virtualInstanceId = entry.getKey();
+      String ec2InstanceId = entry.getValue();
+
+      Map<String, InstanceEbsVolumes.Status> volumes = Maps.newHashMap();
+      for (int j = 0; j < volumesPerInstance; j++) {
+        CreateVolumeRequest request = new CreateVolumeRequest()
+            .withVolumeType(template.getEbsVolumeType())
+            .withSize(template.getEbsVolumeSizeGiB())
+            .withAvailabilityZone(availabilityZone)
+            .withEncrypted(template.isEnableEbsEncryption())
+            .withKmsKeyId(template.getEbsKmsKeyId().get());
+
+        try {
+          CreateVolumeResult result = client.createVolume(request);
+          String volumeId = result.getVolume().getVolumeId();
+          volumes.put(volumeId, InstanceEbsVolumes.Status.CREATED);
+        } catch (AmazonServiceException ex) {
+          String message = "Failed to request an EBS volume for virtual instance %s";
+          LOG.error(String.format(message, virtualInstanceId), ex);
+          String volumeId = InstanceEbsVolumes.UNCREATED_VOLUME_ID + uncreatedVolumeCount;
+          volumes.put(volumeId, InstanceEbsVolumes.Status.FAILED);
+          uncreatedVolumeCount++;
+        }
+      }
+      InstanceEbsVolumes instanceEbsVolumes = new InstanceEbsVolumes(virtualInstanceId, ec2InstanceId, volumes);
+      instanceEbsVolumesList.add(instanceEbsVolumes);
+    }
+    return instanceEbsVolumesList;
+  }
+
+  /**
+   * Returns all volumes from a list of instance EBS volumes that have the specified status.
+   */
+  private static Set<String> getAllVolumeIdsWithStatus(List<InstanceEbsVolumes> instanceEbsVolumes,
+                                                       InstanceEbsVolumes.Status status) {
+    Set<String> volumeIds = Sets.newHashSet();
+    for (InstanceEbsVolumes instance : instanceEbsVolumes) {
+      for (Map.Entry<String, InstanceEbsVolumes.Status> volume : instance.getVolumeStatuses().entrySet()) {
+        String volumeId = volume.getKey();
+        InstanceEbsVolumes.Status volumeStatus = volume.getValue();
+        if (volumeStatus == status) volumeIds.add(volumeId);
+      }
+    }
+    return volumeIds;
+  }
+
+  /**
+   * Returns true if all volumes for an instance has the expected status.
+   */
+  private static boolean instanceHasAllVolumesWithStatus(InstanceEbsVolumes instanceEbsVolumes,
+                                                         InstanceEbsVolumes.Status status) {
+    int volumeCount = instanceEbsVolumes.getVolumeStatuses().size();
+    Set<String> volumesWithExpectedStatus =
+        getAllVolumeIdsWithStatus(Collections.singletonList(instanceEbsVolumes), status);
+    return volumeCount == volumesWithExpectedStatus.size();
+  }
+
+  /**
+   * Waits for the volumes in a list of {@code InstanceEbsVolumes} to reach an available state.
+   * Returns an updated list of {@code InstanceEbsVolumes} with the volumes that became
+   * available marked as AVAILABLE and volumes that failed or timed out marked as FAILED.
+   *
+   * @param createdInstanceVolumes list of instances with their created ebs volumes
+   * @return updated list of instances EBS volumes
+   */
+  public List<InstanceEbsVolumes> waitUntilVolumesAvailable(List<InstanceEbsVolumes> createdInstanceVolumes)
+      throws InterruptedException {
+
+    Set<String> volumesToCheck = getAllVolumeIdsWithStatus(createdInstanceVolumes, InstanceEbsVolumes.Status.CREATED);
+    int numRequestedVolumes = volumesToCheck.size();
+    Set<String> volumesAvailable = Sets.newHashSetWithExpectedSize(numRequestedVolumes);
+
+    LOG.info("Waiting for a maximum of {} seconds for volumes to become available", TIME_OUT_UNTIL_AVAILABLE_SECONDS);
+
+    Stopwatch watch = Stopwatch.createStarted();
+    while (watch.elapsed(TimeUnit.SECONDS) < TIME_OUT_UNTIL_AVAILABLE_SECONDS) {
+      DescribeVolumesRequest volumeRequest = new DescribeVolumesRequest()
+          .withVolumeIds(volumesToCheck);
+
+      try {
+        List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
+
+        for (Volume volume : volumes) {
+          String id = volume.getVolumeId();
+          VolumeState state = VolumeState.fromValue(volume.getState());
+
+          switch (state) {
+            case Creating:
+              break;
+            case Available:
+              volumesToCheck.remove(id);
+              volumesAvailable.add(id);
+              break;
+            case Error:
+              // TODO log why the volume failed which may need a separate api call
+              volumesToCheck.remove(id);
+              break;
+            default:
+              String err = String.format("A requested volume went into an unexpected state %s while waiting " +
+                  "for volume to become available", state);
+              throw new IllegalStateException(String.format(err, state));
+          }
+        }
+
+        if (volumesToCheck.isEmpty()) {
+          break;
+        }
+      } catch (AmazonServiceException ex) {
+        // ignore exception when volume isn't found, newly created volumes may not be found right away
+        if (ex.getErrorCode().equals("InvalidVolume.NotFound")) {
+          LOG.info("Requested volume(s) not yet found");
+        } else {
+          throw ex;
+        }
+      }
+
+      LOG.info("Waiting on {} out of {} volumes to reach a final state, next check in {} seconds",
+          volumesToCheck.size(), numRequestedVolumes, WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
+      TimeUnit.SECONDS.sleep(WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
+    }
+
+    if (volumesToCheck.size() > 0) {
+      LOG.error("Timed out while waiting for volumes to be created, {} out of {} volumes became available",
+          volumesAvailable.size(), numRequestedVolumes);
+    }
+
+    // Update the status of each volume to AVAILABLE or FAILED based on the result
+
+    List<InstanceEbsVolumes> updated = Lists.newArrayList();
+    for (InstanceEbsVolumes instanceEbsVolumes : createdInstanceVolumes) {
+      Map<String, InstanceEbsVolumes.Status> updatedVolumes = Maps.newHashMap();
+      for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
+        InstanceEbsVolumes.Status updatedStatus = volumesAvailable.contains(volumeId) ?
+            InstanceEbsVolumes.Status.AVAILABLE :
+            InstanceEbsVolumes.Status.FAILED;
+        updatedVolumes.put(volumeId, updatedStatus);
+      }
+      updated.add(new InstanceEbsVolumes(instanceEbsVolumes.getVirtualInstanceId(),
+          instanceEbsVolumes.getEc2InstanceId(), updatedVolumes));
+    }
+
+    return updated;
+  }
+
+  /**
+   * Goes through a list of {@code InstanceEbsVolumes} and attaches all AVAILABLE
+   * volumes to its associated instance. If an instance has any volume that isn't
+   * in the AVAILABLE stage, all volumes for that instance will skip tagging and
+   * attachment steps.
+   *
+   * @param template                the instance template
+   * @param instanceEbsVolumesList  a list of instances with their associated volumes
+   * @param userDefinedTags         list of user defined tags
+   * @throws InterruptedException if the operation is interrupted
+   */
+  public List<InstanceEbsVolumes> attachAndTagVolumes(EC2InstanceTemplate template,
+      List<InstanceEbsVolumes> instanceEbsVolumesList, List<Tag> userDefinedTags) throws InterruptedException {
+
+    Set<String> requestedAttachments = Sets.newHashSet();
+
+    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      String virtualInstanceId = instanceEbsVolumes.getVirtualInstanceId();
+      String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
+
+      if (!instanceHasAllVolumesWithStatus(instanceEbsVolumes, InstanceEbsVolumes.Status.AVAILABLE)) {
+        continue;
+      }
+
+      Map<String, InstanceEbsVolumes.Status> volumes = instanceEbsVolumes.getVolumeStatuses();
+      List<String> deviceNames = getEbsDeviceNames(volumes.size());
+
+      int index = 0;
+      for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
+        tagVolume(template, userDefinedTags, virtualInstanceId, volumeId);
+
+        String deviceName = deviceNames.get(index);
+        AttachVolumeRequest volumeRequest = new AttachVolumeRequest()
+            .withVolumeId(volumeId)
+            .withInstanceId(ec2InstanceId)
+            .withDevice(deviceName);
+        index++;
+
+        LOG.info(">> Attaching volume {} to instance {} with device name {}", volumeId, ec2InstanceId, deviceName);
+
+        try {
+          client.attachVolume(volumeRequest);
+          requestedAttachments.add(volumeId);
+        } catch (AmazonServiceException ex) {
+          LOG.error(String.format("Failed to attach volume %s to instance %s with device name %s",
+              volumeId, ec2InstanceId, deviceName), ex);
+        }
+      }
+    }
+
+    Collection<String> attachedVolumes = waitUntilVolumesAttached(requestedAttachments);
+
+    // Update the status of each volume to ATTACHED or FAILED based on the result
+
+    List<InstanceEbsVolumes> updated = Lists.newArrayList();
+    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      Map<String, InstanceEbsVolumes.Status> updatedVolumes = Maps.newHashMap();
+      for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
+        InstanceEbsVolumes.Status updatedStatus = attachedVolumes.contains(volumeId) ?
+            InstanceEbsVolumes.Status.ATTACHED :
+            InstanceEbsVolumes.Status.FAILED;
+        updatedVolumes.put(volumeId, updatedStatus);
+      }
+      updated.add(new InstanceEbsVolumes(instanceEbsVolumes.getVirtualInstanceId(),
+          instanceEbsVolumes.getEc2InstanceId(), updatedVolumes));
+    }
+
+    return updated;
+  }
+
+
+  /**
+   * Returns a list of device names that that EBS volumes should attach with.
+   * Refer to http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/device_naming.html
+   *
+   * @param count the number of device names needed
+   * @return list of device names
+   */
+  public List<String> getEbsDeviceNames(int count) {
+    List<String> names = Lists.newArrayList();
+    char suffix = DEVICE_NAME_START_CHAR;
+    for (int i = 0; i < count; i++) {
+      String name = DEVICE_NAME_START_PREFIX + suffix;
+      names.add(name);
+
+      // Device character suffix should wrap around to the beginning after z.
+      // Note that 'a' is skipped since it's reserved for root. Although
+      // devices [b-e] are meant for instance store volumes, it's okay to
+      // map them since the EC2Provider should not be adding any instance
+      // store devices when EBS volumes are used.
+
+      if (suffix == 'z') suffix = 'b';
+      else suffix++;
+    }
+    return names;
+  }
+
+  /**
+   * Deletes a specified collection of volumes.
+   *
+   * @param volumeIds the collection of volume ids to delete.
+   */
+  public void deleteVolumes(Collection<String> volumeIds) {
+    LOG.info(">> Deleting {} volumes", volumeIds.size());
+    for (String id : volumeIds) {
+      // TODO volumes that are attached need to be detached before we can delete
+      DeleteVolumeRequest request = new DeleteVolumeRequest().withVolumeId(id);
+      client.deleteVolume(request);
+    }
+  }
+
+  /**
+   * Adds a delete on termination flag to all volumes in an {@code InstanceEbsVolumes} list
+   * that have the ATTACHED status. This makes sure that the volumes associated with the
+   * instance will be automatically cleaned up upon instance termination.
+   *
+   * @param instanceEbsVolumesList list of instances along with their associated volumes
+   */
+  public void addDeleteOnTerminationFlag(List<InstanceEbsVolumes> instanceEbsVolumesList) {
+    Set<String> volumesToFlag = getAllVolumeIdsWithStatus(instanceEbsVolumesList, InstanceEbsVolumes.Status.ATTACHED);
+
+    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
+
+      DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
+          .withAttribute(InstanceAttributeName.BlockDeviceMapping)
+          .withInstanceId(ec2InstanceId);
+
+      List<InstanceBlockDeviceMapping> blockDeviceMappings =
+          client.describeInstanceAttribute(instanceAttributeRequest)
+              .getInstanceAttribute()
+              .getBlockDeviceMappings();
+
+      for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
+        String volumeId = blockDeviceMapping.getEbs().getVolumeId();
+
+        // The block device mapping may have volumes associated with it that were not
+        // provisioned by us. We skip marking those volumes for deletion.
+
+        if (!volumesToFlag.contains(volumeId)) {
+          continue;
+        }
+
+        InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
+            .withEbs(
+                new EbsInstanceBlockDeviceSpecification()
+                    .withDeleteOnTermination(true)
+                    .withVolumeId(volumeId)
+            )
+            .withDeviceName(blockDeviceMapping.getDeviceName());
+
+        ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
+            .withBlockDeviceMappings(updatedSpec)
+            .withInstanceId(ec2InstanceId);
+
+        client.modifyInstanceAttribute(modifyRequest);
+      }
+    }
+  }
+
+  /**
+   * Wait for the specified list of volumes to be attached within a timeout.
+   *
+   * @param volumeIds collection of volume ids to wait for
+   * @return collection of volumes that were successfully attached
+   * @throws InterruptedException if the operation is interrupted
+   */
+  private Collection<String> waitUntilVolumesAttached(Collection<String> volumeIds) throws InterruptedException {
+    Set<String> unattachedVolumes = Sets.newHashSet(volumeIds);
+    Set<String> attachedVolumes = Sets.newHashSet();
+
+    LOG.info("Waiting for a maximum of {} seconds for volumes to be attached", TIME_OUT_UNTIL_ATTACHED_SECONDS);
+
+    Stopwatch watch = Stopwatch.createStarted();
+    while (watch.elapsed(TimeUnit.SECONDS) < TIME_OUT_UNTIL_ATTACHED_SECONDS) {
+      DescribeVolumesRequest volumeRequest = new DescribeVolumesRequest().withVolumeIds(unattachedVolumes);
+      List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
+
+      for (Volume volume : volumes) {
+        VolumeAttachment attachment =  Iterables.getOnlyElement(volume.getAttachments());
+        VolumeAttachmentState state = VolumeAttachmentState.fromValue(attachment.getState());
+
+        if (state == VolumeAttachmentState.Attached) {
+          unattachedVolumes.remove(volume.getVolumeId());
+          attachedVolumes.add(volume.getVolumeId());
+        }
+      }
+
+      if (unattachedVolumes.isEmpty()) {
+        return attachedVolumes;
+      }
+
+      LOG.info("Waiting on {} out of {} volumes to be attached, next check in {} seconds",
+        unattachedVolumes.size(), volumeIds.size(), WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS);
+      TimeUnit.SECONDS.sleep(WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS);
+    }
+
+    LOG.error("Timed out while waiting for all volumes to be attached, {} out of {} volumes were attached",
+        attachedVolumes.size(), volumeIds.size());
+    return attachedVolumes;
+  }
+
+
+  /**
+   * Tags an EBS volume. Expects that the volume already exists or is in the process of
+   * being created.
+   *
+   * @param template          the instance template
+   * @param userDefinedTags   the user-defined tags
+   * @param virtualInstanceId the virtual instance id of it's associated instance
+   * @param volumeId          the volume id
+   * @throws InterruptedException if the operation is interrupted
+   */
+  public void tagVolume(EC2InstanceTemplate template, List<Tag> userDefinedTags,
+                         String virtualInstanceId, String volumeId) throws InterruptedException {
+    LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
+    List<Tag> tags = Lists.newArrayList(
+      new Tag(Tags.RESOURCE_NAME, String.format("%s-%s",
+        template.getInstanceNamePrefix(), virtualInstanceId)),
+      new Tag(Tags.CLOUDERA_DIRECTOR_ID, virtualInstanceId),
+      new Tag(Tags.CLOUDERA_DIRECTOR_TEMPLATE_NAME, template.getName())
+    );
+    tags.addAll(userDefinedTags);
+
+    client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
+  }
+
+  /**
+   * Get the availability zone from a Subnet ID.
+   *
+   * @param subnetId the id of the subnet
+   * @return the availability zone of the subnet
+   */
+  private String getAvailabilityZoneFromSubnetId(String subnetId) {
+    DescribeSubnetsRequest request = new DescribeSubnetsRequest().withSubnetIds(subnetId);
+    DescribeSubnetsResult result = client.describeSubnets(request);
+    Subnet subnet = Iterables.getOnlyElement(result.getSubnets());
+    return subnet.getAvailabilityZone();
+  }
+}

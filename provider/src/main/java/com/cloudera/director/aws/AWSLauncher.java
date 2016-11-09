@@ -21,8 +21,10 @@ import static com.cloudera.director.aws.rds.RDSEndpoints.RDSEndpointsConfigPrope
 
 import com.cloudera.director.aws.common.ConfigFragmentWrapper;
 import com.cloudera.director.aws.common.ResourceBundleLocalizationContext;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
@@ -72,6 +74,22 @@ public class AWSLauncher extends AbstractLauncher {
   }
 
   /**
+   * Creates EBS metadata with the specified parameters.
+   *
+   * @param config                   the configuration
+   * @param configurationDirectory   the plugin configuration directory
+   * @param cloudLocalizationContext the parent cloud localization context
+   * @return the EBS metadata
+   */
+  private static EBSMetadata getEBSMetadata(Config config,
+                                            File configurationDirectory, LocalizationContext cloudLocalizationContext) {
+    return new EBSMetadata(getConfiguration(config,
+        Configurations.EBS_METADATA_SECTION,
+        EBSMetadata.EBSMetadataConfigProperties.EBSMetadataConfigurationPropertyToken.values()),
+        configurationDirectory, cloudLocalizationContext);
+  }
+
+  /**
    * Creates virtualization mappings with the specified parameters.
    *
    * @param config                   the configuration
@@ -100,6 +118,22 @@ public class AWSLauncher extends AbstractLauncher {
     return new RDSEndpoints(getConfiguration(config,
         Configurations.RDS_ENDPOINTS_SECTION,
         RDSEndpointsConfigurationPropertyToken.values()),
+        configurationDirectory, cloudLocalizationContext);
+  }
+
+  /**
+   * Creates RDS encryption instance classes with the specified parameters.
+   *
+   * @param config                   the configuration
+   * @param configurationDirectory   the plugin configuration directory
+   * @param cloudLocalizationContext the parent cloud localization context
+   * @return the RDS encryption instance classes
+   */
+  private static RDSEncryptionInstanceClasses getRDSEncryptionInstanceClasses(Config config,
+      File configurationDirectory, LocalizationContext cloudLocalizationContext) {
+    return new RDSEncryptionInstanceClasses(getConfiguration(config,
+        Configurations.RDS_ENCRYPTION_INSTANCE_CLASSES_SECTION,
+        RDSEncryptionInstanceClasses.ConfigurationPropertyToken.values()),
         configurationDirectory, cloudLocalizationContext);
   }
 
@@ -152,10 +186,16 @@ public class AWSLauncher extends AbstractLauncher {
   protected EphemeralDeviceMappings ephemeralDeviceMappings;
 
   @VisibleForTesting
+  protected EBSMetadata ebsMetadata;
+
+  @VisibleForTesting
   protected VirtualizationMappings virtualizationMappings;
 
   @VisibleForTesting
   protected RDSEndpoints rdsEndpoints;
+
+  @VisibleForTesting
+  protected RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses;
 
   @VisibleForTesting
   protected AWSClientConfig awsClientConfig;
@@ -188,9 +228,12 @@ public class AWSLauncher extends AbstractLauncher {
         AWSProvider.METADATA.getLocalizationContext(rootLocalizationContext);
     ephemeralDeviceMappings = getEphemeralDeviceMappings(config, configurationDirectory,
         cloudLocalizationContext);
+    ebsMetadata = getEBSMetadata(config, configurationDirectory, cloudLocalizationContext);
     virtualizationMappings = getVirtualizationMappings(config, configurationDirectory,
         cloudLocalizationContext);
     rdsEndpoints = getRDSEndpoints(config, configurationDirectory, cloudLocalizationContext);
+    rdsEncryptionInstanceClasses = getRDSEncryptionInstanceClasses(config, configurationDirectory,
+        cloudLocalizationContext);
     awsClientConfig = getAWSClientConfig(config,
         (httpProxyParameters == null) ? new HttpProxyParameters() : httpProxyParameters,
         cloudLocalizationContext);
@@ -203,8 +246,9 @@ public class AWSLauncher extends AbstractLauncher {
     if (!AWSProvider.METADATA.getId().equals(cloudProviderId)) {
       throw new IllegalArgumentException("Invalid cloud provider: " + cloudProviderId);
     }
-    return new AWSProvider(configuration, ephemeralDeviceMappings, virtualizationMappings,
-        rdsEndpoints, awsClientConfig, awsFilters, getLocalizationContext(locale));
+    return new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata, virtualizationMappings,
+        rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig, awsFilters,
+        getLocalizationContext(locale));
   }
 
   /**

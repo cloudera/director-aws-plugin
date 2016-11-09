@@ -45,6 +45,17 @@ public final class Configurations {
   public static final String RDS_ENDPOINTS_SECTION = "rdsEndpoints";
 
   /**
+   * The HOCON path prefix for RDS encryption instance classes configuration.
+   */
+  public static final String RDS_ENCRYPTION_INSTANCE_CLASSES_SECTION =
+      "rdsEncryptionInstanceClasses";
+
+  /**
+   * The HOCON path prefix for EBS metadata configuration.
+   */
+  public static final String EBS_METADATA_SECTION = "ebsMetadata";
+
+  /**
    * The HOCON path prefix for HTTP proxy configuration.
    */
   public static final String HTTP_PROXY_SECTION = "httpProxy";

@@ -15,6 +15,7 @@
 package com.cloudera.director.aws;
 
 import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ROLE_ARN;
 import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
 import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SESSION_TOKEN;
 import static junit.framework.Assert.assertEquals;
@@ -66,10 +67,11 @@ public class AWSLauncherTest {
 
     List<ConfigurationProperty> credentialsConfigurationProperties =
         metadata.getCredentialsProviderMetadata().getCredentialsConfigurationProperties();
-    assertEquals(3, credentialsConfigurationProperties.size());
+    assertEquals(4, credentialsConfigurationProperties.size());
     assertTrue(credentialsConfigurationProperties.contains(ACCESS_KEY_ID.unwrap()));
     assertTrue(credentialsConfigurationProperties.contains(SECRET_ACCESS_KEY.unwrap()));
     assertTrue(credentialsConfigurationProperties.contains(SESSION_TOKEN.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(ROLE_ARN.unwrap()));
 
     CloudProvider cloudProvider = launcher.createCloudProvider(
         AWSProvider.ID,
