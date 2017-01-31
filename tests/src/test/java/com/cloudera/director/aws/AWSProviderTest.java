@@ -14,8 +14,8 @@
 
 package com.cloudera.director.aws;
 
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
 import static com.cloudera.director.aws.AWSLauncher.DEFAULT_PLUGIN_LOCALIZATION_CONTEXT;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -68,12 +68,12 @@ public class AWSProviderTest {
 
     Map<String, String> environmentConfig = Maps.newHashMap();
 
-    // Configure ephemeral device mappings etc.
+    // Configure ephemeral device mappings
     EphemeralDeviceMappings ephemeralDeviceMappings =
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.large", 1),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
-    // Configure ephemeral device mappings etc.
+    // Configure EBS metadata
     EBSMetadata ebsMetadata =
         EBSMetadata.getDefaultInstance(ImmutableMap.of("st1", "500-16384"),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
@@ -93,8 +93,9 @@ public class AWSProviderTest {
         RDSEncryptionInstanceClasses.getTestInstance(ImmutableList.of("db.m3.large"),
                                                      DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
-    // Configure filters
+    // Configure filters and timeouts
     AWSFilters awsFilters = AWSFilters.EMPTY_FILTERS;
+    AWSTimeouts awsTimeouts = new AWSTimeouts(null);
 
     HttpProxyParameters httpProxyParameters = new HttpProxyParameters();
 
@@ -104,8 +105,9 @@ public class AWSProviderTest {
         httpProxyParameters, cloudLocalizationContext);
     Configured configuration = new SimpleConfiguration(environmentConfig);
     AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
-        virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig,
-        awsFilters, AWSProvider.getCredentialsProviderChain(configuration,
+        virtualizationMappings, rdsEndpoints,
+        rdsEncryptionInstanceClasses, awsClientConfig,
+        awsFilters, awsTimeouts, AWSProvider.getCredentialsProvider(configuration,
         cloudLocalizationContext),
         cloudLocalizationContext);
     assertSame(awsProviderMetadata, awsProvider.getProviderMetadata());

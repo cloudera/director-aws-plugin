@@ -69,4 +69,9 @@ public final class Configurations {
    * The HOCON path prefix for AWS filter configuration.
    */
   public static final String AWS_FILTERS_SECTION = "awsFilters";
+
+  /**
+   * The HOCON path prefix for AWS timeouts.
+   */
+  public static final String AWS_TIMEOUTS_SECTION = "awsTimeouts";
 }

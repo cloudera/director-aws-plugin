@@ -168,6 +168,11 @@ public class AWSLauncher extends AbstractLauncher {
             : config.getConfig(Configurations.AWS_FILTERS_SECTION));
   }
 
+  private static AWSTimeouts getAWSTimeouts(Config config) {
+    return new AWSTimeouts(config == null || !config.hasPath(Configurations.AWS_TIMEOUTS_SECTION) ?
+                           null : config.getConfig(Configurations.AWS_TIMEOUTS_SECTION));
+  }
+
   private static <T extends ConfigurationPropertyToken> Configured getConfiguration(Config config,
       String section, T[] configurationPropertyTokens) {
     if (config == null) {
@@ -202,6 +207,9 @@ public class AWSLauncher extends AbstractLauncher {
 
   @VisibleForTesting
   protected AWSFilters awsFilters;
+
+  @VisibleForTesting
+  protected AWSTimeouts awsTimeouts;
 
   /**
    * Creates an AWS launcher.
@@ -238,6 +246,7 @@ public class AWSLauncher extends AbstractLauncher {
         (httpProxyParameters == null) ? new HttpProxyParameters() : httpProxyParameters,
         cloudLocalizationContext);
     awsFilters = getAWSFilterConfig(config);
+    awsTimeouts = getAWSTimeouts(config);
   }
 
   @Override
@@ -246,9 +255,9 @@ public class AWSLauncher extends AbstractLauncher {
     if (!AWSProvider.METADATA.getId().equals(cloudProviderId)) {
       throw new IllegalArgumentException("Invalid cloud provider: " + cloudProviderId);
     }
-    return new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata, virtualizationMappings,
-        rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig, awsFilters,
-        getLocalizationContext(locale));
+    return new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
+        virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig,
+        awsFilters, awsTimeouts, getLocalizationContext(locale));
   }
 
   /**

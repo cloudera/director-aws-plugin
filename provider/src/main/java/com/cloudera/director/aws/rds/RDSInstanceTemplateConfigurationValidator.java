@@ -20,6 +20,7 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.ENGINE;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.ENGINE_VERSION;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.INSTANCE_CLASS;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.MASTER_USER_PASSWORD;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.MULTI_AZ;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.TYPE;
@@ -64,6 +65,7 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
 
   static final int MINIMUM_ALLOCATED_STORAGE = 5;
   static final int MAXIMUM_ALLOCATED_STORAGE = 3072;
+  static final int MINIMUM_MASTER_USER_PASSWORD_LENGTH = 8;
 
   // RDS error codes
   static final String INVALID_PARAMETER_VALUE = "InvalidParameterValue";
@@ -109,6 +111,12 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
   static final String ENCRYPTION_NOT_SUPPORTED =
       "Storage encryption is not supported for instance class: %s";
 
+  static final String MASTER_USER_PASSWORD_TOO_SHORT =
+      "The master user password has length %d, less than the minimum of " +
+      MINIMUM_MASTER_USER_PASSWORD_LENGTH;
+  static final String MASTER_USER_PASSWORD_MISSING =
+      "The master user password is not specified";
+
   /**
    * The RDS provider.
    */
@@ -143,6 +151,7 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
     if (isValidIdentifier) {
       checkIdentifierUniqueness(client, name, NAME, accumulator, localizationContext);
     }
+    checkMasterUserPassword(configuration, accumulator, localizationContext);
     checkEngine(client, configuration, accumulator, localizationContext);
     checkInstanceClass(configuration, accumulator, localizationContext);
     checkAllocatedStorage(configuration, accumulator, localizationContext);
@@ -217,6 +226,30 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
       LOG.debug("Instance {} does not already exist", identifier);
     } catch (AmazonServiceException e) {
       throw Throwables.propagate(e);
+    }
+  }
+
+  /**
+   * @param configuration       the configuration to be validated
+   * @param accumulator         the exception condition accumulator
+   * @param localizationContext the localization context
+   */
+  @VisibleForTesting
+  void checkMasterUserPassword(Configured configuration,
+      PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext) {
+
+    String password =
+        configuration.getConfigurationValue(MASTER_USER_PASSWORD, localizationContext);
+    if (password != null) {
+      if (password.length() < MINIMUM_MASTER_USER_PASSWORD_LENGTH) {
+        addError(accumulator, MASTER_USER_PASSWORD, localizationContext, null,
+                 MASTER_USER_PASSWORD_TOO_SHORT, password.length());
+      }
+    } else {
+      // This should not normally happen
+      addError(accumulator, MASTER_USER_PASSWORD, localizationContext, null,
+               MASTER_USER_PASSWORD_MISSING);
     }
   }
 

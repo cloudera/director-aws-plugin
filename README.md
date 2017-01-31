@@ -27,7 +27,11 @@ You can build the plugin with `mvn clean install`. Maven will need access to the
 
 ### Running the live tests
 
-By default, the unit tests do not require communication with AWS. To run live tests that allocate and destroy EC2 and RDS instances, you must specify a system property (`mvn -Dtest.aws.live=true clean install`), and arrange for your AWS credentials to be available to the default credential provider chain via one of the methods described [here](http://docs.aws.amazon.com/AWSSdkDocsJava/latest/DeveloperGuide/credentials.html).
+By default, the unit tests do not require communication with AWS. To run live tests that allocate and destroy EC2 and RDS instances, you must specify a system property (`test.aws.live`), and arrange for your AWS credentials to be available to the default credential provider chain via one of the methods described [here](http://docs.aws.amazon.com/AWSSdkDocsJava/latest/DeveloperGuide/credentials.html).
+
+The live test also requires some AWS network configurations to be specified in a property file, see the [sample](./tests/src/test/resources/livetest.sample.properties) file. The default location to look for this property file should be overridden and is specified as a system property (`test.aws.live.file`).
+
+Example command to run live tests : `mvn -Dtest.aws.live=true -Dtest.aws.live.file=/path/to/livetest.properties clean install`
 
 ### Implementation details
 

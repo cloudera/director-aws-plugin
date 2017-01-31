@@ -351,9 +351,8 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
     SRIOV_NET_SUPPORT(new SimpleDisplayPropertyBuilder()
         .displayKey("sriovNetSupport")
         .name("Enhanced networking (SR-IOV)")
-        .defaultDescription("Whether enhanced networking is enabled.")
-        .widget(DisplayProperty.Widget.CHECKBOX)
-        .type(DisplayProperty.Type.BOOLEAN)
+        .defaultDescription("Whether enhanced networking with the " +
+            "Intel 82599 Virtual Function interface is enabled.")
         .sensitive(false)
         .build()) {
       @Override

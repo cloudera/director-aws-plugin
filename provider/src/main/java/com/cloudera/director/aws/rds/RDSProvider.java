@@ -30,8 +30,7 @@ import com.amazonaws.services.rds.model.DescribeDBInstancesRequest;
 import com.amazonaws.services.rds.model.DescribeDBInstancesResult;
 import com.amazonaws.services.rds.model.Tag;
 import com.cloudera.director.aws.AWSExceptions;
-import com.cloudera.director.aws.InstanceTags;
-import com.cloudera.director.aws.Tags;
+import com.cloudera.director.aws.Tags.ResourceTags;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.spi.v1.database.DatabaseServerProviderMetadata;
 import com.cloudera.director.spi.v1.database.util.AbstractDatabaseServerProvider;
@@ -136,10 +135,13 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
         .addValidValues(
             "ap-northeast-1",
             "ap-northeast-2",
+            "ap-south-1",
             "ap-southeast-1",
             "ap-southeast-2",
+            "ca-central-1",
             "eu-central-1",
             "eu-west-1",
+            "eu-west-2",
             "sa-east-1",
             "us-east-1",
             "us-east-2",
@@ -480,10 +482,13 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
   private Collection<Tag> convertToTags(Map<String, String> templateTags,
       RDSInstanceTemplate template, String instanceId) {
     Collection<Tag> tags = Lists.newArrayList();
-    tags.add(new Tag().withKey(InstanceTags.INSTANCE_NAME).withValue(String.format("%s-%s",
+    tags.add(new Tag().withKey(ResourceTags.RESOURCE_NAME.getTagKey())
+      .withValue(String.format("%s-%s",
         template.getInstanceNamePrefix(), instanceId)));
-    tags.add(new Tag().withKey(Tags.CLOUDERA_DIRECTOR_ID).withValue(instanceId));
-    tags.add(new Tag().withKey(Tags.CLOUDERA_DIRECTOR_TEMPLATE_NAME).withValue(template.getName()));
+    tags.add(new Tag().withKey(ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey())
+      .withValue(instanceId));
+    tags.add(new Tag().withKey(ResourceTags.CLOUDERA_DIRECTOR_TEMPLATE_NAME.getTagKey())
+      .withValue(template.getName()));
     for (Map.Entry<String, String> e : templateTags.entrySet()) {
       tags.add(new Tag().withKey(e.getKey()).withValue(e.getValue()));
     }

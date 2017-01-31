@@ -7,6 +7,9 @@ import com.amazonaws.AmazonServiceException;
 import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
 import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
+import com.google.common.collect.ImmutableSet;
+
+import java.util.Set;
 
 /**
  * Provides utilities for dealing with AWS exceptions.
@@ -15,10 +18,42 @@ import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderExcepti
  */
 public class AWSExceptions {
 
+  // The set of error codes representing authorization failures.
+  private static final Set<String> AUTHORIZATION_ERROR_CODES = ImmutableSet.of(
+      "AuthFailure",
+      "UnauthorizedOperation"
+  );
+
+
   /**
-   * Represents an authorization failure.
+   * Propagates exception as an unrecoverable error when the relevant
+   * indicators are present.
+   *
+   * @param e the Amazon client exception
    */
-  private static final String AUTH_FAILURE = "AuthFailure";
+  public static void propagateIfUnrecoverable(AmazonClientException e) {
+    if (e instanceof AmazonServiceException) {
+      AmazonServiceException ase = (AmazonServiceException) e;
+      if (AUTHORIZATION_ERROR_CODES.contains(ase.getErrorCode())) {
+        throw new InvalidCredentialsException(ase.getErrorMessage(), ase);
+      }
+
+      // All exceptions that represent client errors are unrecoverable because the request itself is wrong
+      // See {@see AmazonServiceException#ErrorType}
+      // OperationNotPermitted exception is unrecoverable. This can happen when terminating an
+      // instance that has termination protection enabled, or trying to detach the primary
+      // network interface (eth0) from an instance.
+      // See docs at http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
+      if (ase.getErrorType() == AmazonServiceException.ErrorType.Client ||
+        "OperationNotPermitted".equals(ase.getErrorCode())) {
+        throw new UnrecoverableProviderException(ase.getErrorMessage(), ase);
+      }
+    }
+
+    if (!e.isRetryable()) {
+      throw new UnrecoverableProviderException(e.getMessage(), e);
+    }
+  }
 
   /**
    * Returns an appropriate SPI exception in response to the specified AWS exception.
@@ -27,18 +62,10 @@ public class AWSExceptions {
    * @return the corresponding SPI exception
    */
   public static RuntimeException propagate(AmazonClientException e) {
-    if (e instanceof AmazonServiceException) {
-      AmazonServiceException ase = (AmazonServiceException) e;
-      String errorCode = ase.getErrorCode();
-      if (AUTH_FAILURE.equals(errorCode)) {
-        return new InvalidCredentialsException(e.getMessage());
-      }
-    }
-    if (e.isRetryable()) {
-      return new TransientProviderException(e.getMessage());
-    } else {
-      return new UnrecoverableProviderException(e.getMessage());
-    }
+    propagateIfUnrecoverable(e);
+
+    // otherwise assume this is a transient error
+    throw new TransientProviderException(e.getMessage(), e);
   }
 
   /**

@@ -15,13 +15,13 @@
 package com.cloudera.director.aws.ec2;
 
 
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
-import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IAM_PROFILE_NAME;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
@@ -34,6 +34,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
+import static com.cloudera.director.spi.v1.model.util.Validations.addError;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
@@ -67,6 +68,7 @@ import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccu
 import com.cloudera.director.spi.v1.util.Preconditions;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
+import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
@@ -192,6 +194,11 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   @VisibleForTesting
   static final String INVALID_SPOT_BID_MSG =
       "Invalid Spot bid %s. Spot bid must be a positive value representing the price in USD/hr";
+
+  @VisibleForTesting
+  static final String INVALID_BLOCK_DURATION_MINUTES_MSG =
+      "Invalid block duration in minutes, %s. Block duration must be a multiple of 60 " +
+          "(60, 120, 180, 240, 300, or 360)";
 
   @VisibleForTesting
   static final String IMAGE_OWNER_ID_BLACKLIST_KEY = "ownerId";
@@ -796,6 +803,8 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         configuration.getConfigurationValue(USE_SPOT_INSTANCES, localizationContext));
     String spotBidUSDPerHr =
         configuration.getConfigurationValue(SPOT_BID_USD_PER_HR, localizationContext);
+    String blockDurationMinutes = Strings.emptyToNull(
+        configuration.getConfigurationValue(BLOCK_DURATION_MINUTES, localizationContext));
 
     if ((spotBidUSDPerHr == null) || spotBidUSDPerHr.isEmpty()) {
       if (useSpotInstances) {
@@ -812,6 +821,20 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
       if (!valid) {
         addError(accumulator, SPOT_BID_USD_PER_HR, localizationContext,
             null, INVALID_SPOT_BID_MSG, spotBidUSDPerHr);
+      }
+    }
+    if (blockDurationMinutes != null) {
+      boolean valid = false;
+      try {
+        Integer blockDuration = Integer.valueOf(blockDurationMinutes);
+        valid = blockDuration >= 60 &&
+            blockDuration <= 360 &&
+            blockDuration % 60 == 0;
+      } catch (NumberFormatException ignore) {
+      }
+      if (!valid) {
+        addError(accumulator, BLOCK_DURATION_MINUTES, localizationContext,
+            null, INVALID_BLOCK_DURATION_MINUTES_MSG, blockDurationMinutes);
       }
     }
   }

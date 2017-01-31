@@ -15,6 +15,7 @@
 package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
@@ -42,6 +43,7 @@ import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilde
 import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
+import com.google.common.base.Strings;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -286,6 +288,24 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .build()),
 
     /**
+     * Whether to use Spot Instances. Default is <code>false</code>.
+     *
+     * @see <a href="http://aws.amazon.com/ec2/spot/">Spot Instances</a>
+     */
+    USE_SPOT_INSTANCES(new SimpleConfigurationPropertyBuilder()
+        .configKey("useSpotInstances")
+        .name("Use Spot Instances")
+        .widget(ConfigurationProperty.Widget.CHECKBOX)
+        .defaultValue("false")
+        .type(Property.Type.BOOLEAN)
+        .defaultDescription("Whether to use Spot Instances. " +
+            "Since Spot Instances can be terminated unexpectedly if the Spot market price increases, " +
+            "they should be used only for workers, and not for nodes that must be reliable, " +
+            "such as masters and data nodes.<br />" +
+            "<a target='_blank' href='http://aws.amazon.com/ec2/spot/'>More Information</a>")
+         .build()),
+
+    /**
      * Spot bid in USD/hr.
      */
     SPOT_BID_USD_PER_HR(new SimpleConfigurationPropertyBuilder()
@@ -302,6 +322,26 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         ).widget(ConfigurationProperty.Widget.NUMBER)
         .type(Property.Type.DOUBLE)
         .defaultErrorMessage("Spot bid is mandatory when using Spot Instances")
+        .build()),
+
+    /**
+     * The required duration for the Spot instances.
+     *
+     * @see <a href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-requests.html#fixed-duration-spot-instances'>Fixed Duration Spot Instances</a>
+     */
+    BLOCK_DURATION_MINUTES(new SimpleConfigurationPropertyBuilder()
+        .configKey("blockDurationMinutes")
+        .name("Spot Block Duration (minutes)")
+        .defaultDescription(
+            "Specify the required duration for the Spot instances (also known as Spot blocks), " +
+                "in minutes. This value must be a multiple of 60 (60, 120, 180, 240, 300, or 360). " +
+                "Spot block instances will run for the predefined duration - in hourly increments " +
+                "up to six hours in length - at a significant discount compared to On-Demand " +
+                "pricing.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/spot-requests.html#fixed-duration-spot-instances'>More Information</a>"
+        ).widget(ConfigurationProperty.Widget.LIST)
+        .type(Property.Type.INTEGER)
+        .addValidValues("60", "120", "180", "240", "300", "360")
         .build()),
 
     /**
@@ -357,6 +397,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "t2.small",
             "t2.medium",
             "t2.large",
+            "t2.xlarge",
+            "t2.2xlarge",
             "m3.medium",
             "m3.large",
             "m3.xlarge",
@@ -366,6 +408,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "m4.2xlarge",
             "m4.4xlarge",
             "m4.10xlarge",
+            "m4.16xlarge",
             "c3.large",
             "c3.xlarge",
             "c3.2xlarge",
@@ -377,11 +420,23 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "c4.4xlarge",
             "c4.8xlarge",
             "g2.2xlarge",
+            "g2.8xlarge",
+            "p2.xlarge",
+            "p2.8xlarge",
+            "p2.16xlarge",
             "r3.large",
             "r3.xlarge",
             "r3.2xlarge",
             "r3.4xlarge",
             "r3.8xlarge",
+            "r4.large",
+            "r4.xlarge",
+            "r4.2xlarge",
+            "r4.4xlarge",
+            "r4.8xlarge",
+            "r4.16xlarge",
+            "x1.16xlarge",
+            "x1.32xlarge",
             "i2.xlarge",
             "i2.2xlarge",
             "i2.4xlarge",
@@ -390,25 +445,9 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "d2.xlarge",
             "d2.2xlarge",
             "d2.4xlarge",
-            "d2.8xlarge")
-        .build()),
-
-    /**
-     * Whether to use Spot Instances. Default is <code>false</code>.
-     *
-     * @see <a href="http://aws.amazon.com/ec2/spot/">Spot Instances</a>
-     */
-    USE_SPOT_INSTANCES(new SimpleConfigurationPropertyBuilder()
-        .configKey("useSpotInstances")
-        .name("Use Spot Instances")
-        .widget(ConfigurationProperty.Widget.CHECKBOX)
-        .defaultValue("false")
-        .type(Property.Type.BOOLEAN)
-        .defaultDescription("Whether to use Spot Instances. " +
-            "Since Spot Instances can be terminated unexpectedly if the Spot market price increases, " +
-            "they should be used only for workers, and not for nodes that must be reliable, " +
-            "such as masters and data nodes.<br />" +
-            "<a target='_blank' href='http://aws.amazon.com/ec2/spot/'>More Information</a>")
+            "d2.8xlarge",
+            "f1.2xlarge",
+            "f1.16xlarge")
         .build());
 
     /**
@@ -522,6 +561,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final Optional<BigDecimal> spotBidUSDPerHour;
 
   /**
+   * The block duration in minutes for Spot block instances.
+   */
+  private final Optional<Integer> blockDurationMinutes;
+
+  /**
    * Creates an EC2 instance template with the specified parameters.
    *
    * @param name                        the name of the template
@@ -569,6 +613,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     this.spotBidUSDPerHour = useSpotInstances
         ? Optional.of(new BigDecimal(spotBidUSDPerHourString))
         : Optional.<BigDecimal>absent();
+    String blockDurationMinutesString = Strings.emptyToNull(
+        getConfigurationValue(BLOCK_DURATION_MINUTES, localizationContext));
+    this.blockDurationMinutes = useSpotInstances && blockDurationMinutesString != null
+        ? Optional.of(Integer.parseInt(blockDurationMinutesString))
+        : Optional.<Integer>absent();
   }
 
   /**
@@ -730,5 +779,14 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   public Optional<BigDecimal> getSpotBidUSDPerHour() {
     return spotBidUSDPerHour;
+  }
+
+  /**
+   * Returns the Spot block duration, in minutes.
+   *
+   * @return the Spot block duration, in minutes
+   */
+  public Optional<Integer> getBlockDurationMinutes() {
+    return blockDurationMinutes;
   }
 }

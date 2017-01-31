@@ -14,20 +14,18 @@
 
 package com.cloudera.director.aws;
 
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ROLE_ARN;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SESSION_TOKEN;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.DELEGATED_ROLE_ARN;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.DELEGATED_ROLE_EXTERNAL_ID;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SESSION_TOKEN;
 
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.AWSCredentialsProviderChain;
+import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.auth.AWSStaticCredentialsProvider;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.auth.BasicSessionCredentials;
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
-import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClient;
-import com.amazonaws.services.securitytoken.model.AssumeRoleRequest;
-import com.amazonaws.services.securitytoken.model.AssumeRoleResult;
-import com.amazonaws.services.securitytoken.model.Credentials;
+import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationProperty;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
@@ -38,9 +36,10 @@ import com.cloudera.director.spi.v1.provider.util.SimpleCredentialsProviderMetad
 import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
 
+import java.text.DateFormat;
+import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
-import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,24 +47,19 @@ import org.slf4j.LoggerFactory;
 /**
  * A credentials provider for AWS.
  */
+@SuppressWarnings("PMD.TooManyStaticImports")
 public class AWSCredentialsProviderChainProvider
-    implements CredentialsProvider<AWSCredentialsProviderChain> {
+    implements CredentialsProvider<AWSCredentialsProvider> {
 
   private static final Logger LOG =
       LoggerFactory.getLogger(AWSCredentialsProviderChainProvider.class);
-
-  private final AWSSecurityTokenServiceClient sts;
-
-  public AWSCredentialsProviderChainProvider(AWSSecurityTokenServiceClient sts) {
-    this.sts = sts;
-  }
 
   /**
    * The credentials provider metadata.
    */
   public static final CredentialsProviderMetadata METADATA =
       new SimpleCredentialsProviderMetadata(
-          AWSConfigCredentialsProvider.getConfigurationProperties());
+          AWSConfigCredentialsProviderProvider.getConfigurationProperties());
 
   @Override
   public CredentialsProviderMetadata getMetadata() {
@@ -73,22 +67,18 @@ public class AWSCredentialsProviderChainProvider
   }
 
   @Override
-  public AWSCredentialsProviderChain createCredentials(Configured config,
+  public AWSCredentialsProvider createCredentials(Configured config,
       LocalizationContext localizationContext) {
-    return new AWSCredentialsProviderChain(
-        new AWSConfigCredentialsProvider(config, localizationContext,
-                                         this.sts),
-        new DefaultAWSCredentialsProviderChain()
-    );
+    return new AWSConfigCredentialsProviderProvider(config, localizationContext)
+        .getCredentialsProvider();
   }
 
   /**
-   * Config-based AWS credentials provider.
+   * Config-based AWS credentials provider provider.
    */
   // Fully qualifying class names due to compiler bug
-  public static class AWSConfigCredentialsProvider
-      extends com.cloudera.director.spi.v1.model.util.AbstractConfigured
-      implements com.amazonaws.auth.AWSCredentialsProvider {
+  public static class AWSConfigCredentialsProviderProvider
+      extends com.cloudera.director.spi.v1.model.util.AbstractConfigured {
 
     /**
      * The list of configuration properties (including inherited properties).
@@ -110,7 +100,7 @@ public class AWSCredentialsProviderChainProvider
      * AWS credentials configuration property tokens.
      */
     // Fully qualifying class name due to compiler bug
-    public static enum AWSConfigCredentialsProviderConfigurationPropertyToken
+    public enum AWSConfigCredentialsProviderConfigurationPropertyToken
         implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
 
       /**
@@ -162,11 +152,27 @@ public class AWSCredentialsProviderChainProvider
        *
        * @see <a href="http://docs.aws.amazon.com/STS/latest/APIReference/API_AssumeRole.html">API AssumeRole</a>
        */
-      ROLE_ARN(new SimpleConfigurationPropertyBuilder()
-          .configKey("roleArn")
-          .name("Role ARN")
+      DELEGATED_ROLE_ARN(new SimpleConfigurationPropertyBuilder()
+          .configKey("delegatedRoleArn")
+          .name("Delegated Role ARN")
           .defaultDescription("The Amazon Resource Name (ARN) of the role to assume.")
           .sensitive(false)
+          .hidden(true)
+          .build()),
+
+      /**
+       * A unique identifier that is used by third parties when assuming roles
+       * in their customers' accounts. It is used to prevent the confused
+       * deputy problem.
+       *
+       * @see <a href="http://docs.aws.amazon.com/IAM/latest/UserGuide/id_roles_create_for-user_externalid.html">
+       * How to Use an External ID When Granting Access to Your AWS Resources to a Third Party</a>
+       */
+      DELEGATED_ROLE_EXTERNAL_ID(new SimpleConfigurationPropertyBuilder()
+          .configKey("delegatedRoleExternalId")
+          .name("Delegated Role External ID")
+          .defaultDescription("The external id for delegated role access.")
+          .sensitive(true)
           .hidden(true)
           .build());
 
@@ -180,7 +186,7 @@ public class AWSCredentialsProviderChainProvider
        *
        * @param configurationProperty the configuration property
        */
-      private AWSConfigCredentialsProviderConfigurationPropertyToken(
+      AWSConfigCredentialsProviderConfigurationPropertyToken(
           ConfigurationProperty configurationProperty) {
         this.configurationProperty = configurationProperty;
       }
@@ -192,36 +198,9 @@ public class AWSCredentialsProviderChainProvider
     }
 
     /**
-     * The AWS access key.
+     * The AWS credentials provider.
      */
-    private final Optional<String> accessKeyId;
-
-    /**
-     * The AWS secret access key.
-     */
-    private final Optional<String> secretAccessKey;
-
-    /**
-     * The optional session token.
-     */
-    private final Optional<String> sessionToken;
-
-    /**
-     * The optional Amazon Resource Name (ARN) of the role to assume.
-     */
-    private final Optional<String> roleArn;
-
-    /**
-     * Client for accessing AWS STS (Security Token Service).
-     * All service calls made using this client are blocking, and will not
-     * return until the service call completes.
-     */
-    private final AWSSecurityTokenServiceClient stsClient;
-
-    /**
-     * The temporary credentials that were used last time.
-     */
-    private Credentials lastTempCredentials;
+    private final AWSCredentialsProvider credentialsProvider;
 
     /**
      * The duration, in seconds, of the role session. The value can range from
@@ -237,47 +216,74 @@ public class AWSCredentialsProviderChainProvider
      * @param localizationContext the localization context
      */
     @SuppressWarnings("PMD.UselessParentheses")
-    public AWSConfigCredentialsProvider(Configured configuration,
-                                        LocalizationContext localizationContext,
-                                        AWSSecurityTokenServiceClient sts) {
+    public AWSConfigCredentialsProviderProvider(Configured configuration,
+        LocalizationContext localizationContext) {
       super(configuration);
-      accessKeyId = getOptionalConfigurationValue(ACCESS_KEY_ID, localizationContext);
-      secretAccessKey = getOptionalConfigurationValue(SECRET_ACCESS_KEY, localizationContext);
-      sessionToken = getOptionalConfigurationValue(SESSION_TOKEN, localizationContext);
-      roleArn = getOptionalConfigurationValue(ROLE_ARN, localizationContext);
-      stsClient = sts;
-      if (!((accessKeyId.isPresent() && secretAccessKey.isPresent()) ||
-          (roleArn.isPresent() && stsClient != null))) {
-        LOG.info("AWS credentials not fully specified."
-            + " Credentials provider chain fallback will be used.");
+      Optional<String> optionalAccessKeyId =
+          getOptionalConfigurationValue(ACCESS_KEY_ID, localizationContext);
+      Optional<String> optionalSecretAccessKey =
+          getOptionalConfigurationValue(SECRET_ACCESS_KEY, localizationContext);
+      if (optionalAccessKeyId.isPresent() && optionalSecretAccessKey.isPresent()) {
+        String accessKeyId = optionalAccessKeyId.get();
+        String secretAccessKey = optionalSecretAccessKey.get();
+        Optional<String> sessionToken =
+            getOptionalConfigurationValue(SESSION_TOKEN, localizationContext);
+        credentialsProvider = new AWSStaticCredentialsProvider(
+            sessionToken.isPresent()
+                ? new BasicSessionCredentials(accessKeyId, secretAccessKey, sessionToken.get())
+                : new BasicAWSCredentials(accessKeyId, secretAccessKey)
+        );
+      } else {
+        Optional<String> roleArn =
+            getOptionalConfigurationValue(DELEGATED_ROLE_ARN, localizationContext);
+        Optional<String> externalId =
+            getOptionalConfigurationValue(DELEGATED_ROLE_EXTERNAL_ID, localizationContext);
+        if (roleArn.isPresent() && externalId.isPresent()) {
+          credentialsProvider =
+              createAssumeRoleSessionCredentialsProvider(roleArn.get(), externalId.get());
+        } else {
+          LOG.info("AWS credentials not fully specified."
+              + " Credentials provider chain fallback will be used.");
+          credentialsProvider = new DefaultAWSCredentialsProviderChain();
+        }
       }
     }
 
     /**
-     * Gets temporary security credentials (consisting of an access key ID,
-     * a secret access key, and a security token) that director can use to
-     * access AWS resources across the account defined by the role ARN.
+     * Returns the AWS credentials provider.
      *
-     * If the last used temporary credentials will not expire within the next
-     * 10 seconds, we will simply re-use the same credentials.
-     *
-     * @return temporary AWS security credentials
+     * @return the AWS credentials provider
      */
-    private BasicSessionCredentials assumeRole() {
-      // Ten seconds as a buffer to make sure the temporary credentials are
-      // still valid when they are used.
-      final long bufferInMillis = 10000L;
-      if (lastTempCredentials != null &&
-          lastTempCredentials.getExpiration().after(
-              new Date(System.currentTimeMillis() + bufferInMillis))) {
-        return new BasicSessionCredentials(
-            lastTempCredentials.getAccessKeyId(),
-            lastTempCredentials.getSecretAccessKey(),
-            lastTempCredentials.getSessionToken()
-        );
-      }
+    public AWSCredentialsProvider getCredentialsProvider() {
+      return credentialsProvider;
+    }
 
-      /* The role session name uniquely identifies a session when the same
+    /**
+     * Creates the STS assume role session credentials provider.
+     *
+     * @param roleArn    the Amazon Resource Name (ARN) of the role to assume
+     * @param externalId the unique identifier that is used by third parties when assuming
+     *                   roles in their customers' accounts
+     * @return the STS assume role session credentials provider
+     */
+    private STSAssumeRoleSessionCredentialsProvider createAssumeRoleSessionCredentialsProvider(
+        String roleArn,
+        String externalId) {
+      // Role ARN format:
+      // roleArn:partition:service:region:account-id:resourcetype/resource
+      // See, https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#Identifiers_ARNs
+      String[] roleArnComponents = roleArn.split(":");
+      String[] resourceComponents;
+      if (roleArnComponents.length < 6
+          || (resourceComponents = roleArnComponents[5].split("/")).length < 2) {
+        throw new IllegalArgumentException("Malformed role ARN: " + roleArn);
+      }
+      String assumedRoleName = resourceComponents[1];
+      DateFormat dateFormat = new SimpleDateFormat("yyMMddHHmmssSSSz");
+      String currentTime = dateFormat.format(new Date());
+
+      /*
+       * The role session name uniquely identifies a session when the same
        * role is assumed by different principals or for different reasons.
        * In cross-account scenarios, the role session name is visible to, and
        * can be logged by the account that owns the role. The role session name
@@ -290,45 +296,23 @@ public class AWSCredentialsProviderChainProvider
        * a string of characters consisting of upper- and lower-case alphanumeric
        * characters with no spaces. You can also include any of the following
        * characters: =,.@-
+       *
+       * Its minimum length is 2, and maximum length is 64.
        */
-      final String roleSessionName = UUID.randomUUID().toString();
-      AssumeRoleRequest assumeRoleRequest = new AssumeRoleRequest()
-          .withRoleArn(roleArn.get())
-          .withRoleSessionName(roleSessionName)
-          .withDurationSeconds(ASSUME_ROLE_DURATION_SECONDS);
-      LOG.info("Assume role: {} with session name: {} and duration in {} seconds",
-               roleArn.get(), roleSessionName, ASSUME_ROLE_DURATION_SECONDS);
-
-      AssumeRoleResult assumeRoleResult = stsClient.assumeRole(assumeRoleRequest);
-      lastTempCredentials = assumeRoleResult.getCredentials();
-      return new BasicSessionCredentials(
-          lastTempCredentials.getAccessKeyId(),
-          lastTempCredentials.getSecretAccessKey(),
-          lastTempCredentials.getSessionToken()
-      );
-    }
-
-    @Override
-    public AWSCredentials getCredentials() {
-      if (accessKeyId.isPresent() && secretAccessKey.isPresent()) {
-        String accessKeyIdValue = accessKeyId.get();
-        String secretAccessKeyValue = secretAccessKey.get();
-        if (sessionToken.isPresent()) {
-          return new BasicSessionCredentials(accessKeyIdValue, secretAccessKeyValue,
-                                             sessionToken.get());
-        } else {
-          return new BasicAWSCredentials(accessKeyIdValue, secretAccessKeyValue);
-        }
+      final int maxLen = 64;
+      String roleSessionName = String.format("%s-%s", currentTime, assumedRoleName);
+      if (roleSessionName.length() > maxLen) {
+        roleSessionName = roleSessionName.substring(0, maxLen);
       }
-      if (roleArn.isPresent() && stsClient != null) {
-        return assumeRole();
-      }
-      return null;
-    }
 
-    @Override
-    public void refresh() {
-      // no-op, credentials are immutable
+      LOG.info("Building provider to assume role: '{}' with external id: '{}' session name: '{}'"
+              + " and duration {} seconds",
+          roleArn, externalId, roleSessionName, ASSUME_ROLE_DURATION_SECONDS);
+
+      return new STSAssumeRoleSessionCredentialsProvider.Builder(roleArn, roleSessionName)
+          .withExternalId(externalId)
+          .withRoleSessionDurationSeconds(ASSUME_ROLE_DURATION_SECONDS)
+          .build();
     }
 
     /**

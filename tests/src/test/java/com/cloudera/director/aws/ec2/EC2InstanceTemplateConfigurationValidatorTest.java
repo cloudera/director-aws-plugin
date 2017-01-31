@@ -15,6 +15,7 @@
 package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
@@ -668,44 +669,66 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
 
   @Test
   public void testValidateSpotParameters() {
-    checkSpotParameters(null, null);
+    String[] validBlockDurations = {null, "", "60", "120", "180", "240", "300", "360"};
+
+    checkSpotParameters(null, null, null);
     verifyClean();
 
-    checkSpotParameters(null, "");
+    checkSpotParameters(null, "", null);
     verifyClean();
 
-    checkSpotParameters(Boolean.FALSE, null);
+    checkSpotParameters(Boolean.FALSE, null, null);
     verifyClean();
 
-    checkSpotParameters(Boolean.FALSE, "");
+    checkSpotParameters(Boolean.FALSE, "", null);
     verifyClean();
 
-    checkSpotParameters(Boolean.TRUE, "0.031");
-    verifyClean();
+    for (String blockDuration : validBlockDurations) {
+      checkSpotParameters(Boolean.TRUE, "0.031", blockDuration);
+      verifyClean();
+    }
   }
 
   @Test
   public void testValidateSpotParameters_MissingSpotBid() {
-    checkSpotParameters(Boolean.TRUE, null);
+    checkSpotParameters(Boolean.TRUE, null, null);
     verifySingleError(SPOT_BID_USD_PER_HR);
   }
 
   @Test
   public void testValidateSpotParameters_EmptySpotBid() {
-    checkSpotParameters(Boolean.TRUE, "");
+    checkSpotParameters(Boolean.TRUE, "", null);
     verifySingleError(SPOT_BID_USD_PER_HR);
   }
 
   @Test
   public void testValidateSpotParameters_MalformedSpotBid() {
-    checkSpotParameters(Boolean.FALSE, "abc");
+    checkSpotParameters(Boolean.FALSE, "abc", null);
     verifySingleError(SPOT_BID_USD_PER_HR);
   }
 
   @Test
   public void testValidateSpotParameters_NegativeSpotBid() {
-    checkSpotParameters(Boolean.TRUE, "-0.031");
+    checkSpotParameters(Boolean.TRUE, "-0.031", null);
     verifySingleError(SPOT_BID_USD_PER_HR);
+  }
+
+  @Test
+  public void testValidateSpotParameters_InvalidBlockDuration() {
+    String[] invalidBlockDurations = {
+        "59", "61",
+        "119", "121",
+        "179", "181",
+        "239", "241",
+        "299", "301",
+        "359", "361"
+    };
+
+    for (String blockDuration : invalidBlockDurations) {
+      checkSpotParameters(Boolean.TRUE, "0.031", blockDuration);
+      verifySingleError(BLOCK_DURATION_MINUTES);
+      resetAccumulator();
+    }
   }
 
   @Test
@@ -959,16 +982,21 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
   /**
    * Invokes checkSpotParameters with the specified configuration.
    *
-   * @param useSpotInstances whether to use spot instances
-   * @param spotBidUSDPerHr  the spot bid, in USD/hr
+   * @param useSpotInstances     whether to use spot instances
+   * @param spotBidUSDPerHr      the spot bid, in USD/hr
+   * @param blockDurationMinutes the spot block duration, in minutes
    */
-  protected void checkSpotParameters(Boolean useSpotInstances, String spotBidUSDPerHr) {
+  protected void checkSpotParameters(Boolean useSpotInstances, String spotBidUSDPerHr,
+      String blockDurationMinutes) {
     Map<String, String> configMap = Maps.newHashMap();
     if (useSpotInstances != null) {
       configMap.put(USE_SPOT_INSTANCES.unwrap().getConfigKey(), useSpotInstances.toString());
     }
     if (spotBidUSDPerHr != null) {
       configMap.put(SPOT_BID_USD_PER_HR.unwrap().getConfigKey(), spotBidUSDPerHr);
+    }
+    if (blockDurationMinutes != null) {
+      configMap.put(BLOCK_DURATION_MINUTES.unwrap().getConfigKey(), blockDurationMinutes);
     }
     Configured configuration = new SimpleConfiguration(configMap);
     validator.checkSpotParameters(configuration, accumulator, localizationContext);
@@ -1043,5 +1071,13 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     if (errorMsgFormat.isPresent()) {
       assertThat(condition.getMessage()).isEqualTo(String.format(errorMsgFormat.get(), args));
     }
+  }
+
+  /**
+   * Resets the accumulator.
+   */
+  private void resetAccumulator() {
+    // Replace the accumulator because it doesn't support reset.
+    accumulator = new PluginExceptionConditionAccumulator();
   }
 }

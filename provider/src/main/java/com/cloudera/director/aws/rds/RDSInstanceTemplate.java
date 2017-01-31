@@ -175,13 +175,19 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
             "db.t2.micro",
             "db.t2.small",
             "db.t2.medium",
+            "db.t2.large",
             "db.m2.xlarge",
             "db.m2.2xlarge",
             "db.m2.4xlarge",
             "db.cr1.8xlarge",
             "db.m1.medium",
             "db.m1.large",
-            "db.m1.xlarge"
+            "db.m1.xlarge",
+            "db.m4.large",
+            "db.m4.xlarge",
+            "db.m4.2xlarge",
+            "db.m4.4xlarge",
+            "db.m4.10xlarge"
         )
         .build()),
 

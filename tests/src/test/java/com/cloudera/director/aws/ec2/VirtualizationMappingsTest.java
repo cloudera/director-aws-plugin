@@ -62,10 +62,15 @@ public class VirtualizationMappingsTest {
         DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
   }
 
+  // When new HVM instance types are added to virtualizationmappings.properties,
+  // update this constant.
+
+  private static final int NUM_HVM_INSTANCE_TYPES = 59;
+
   @Test
   public void testWithNonOverrideBuiltIn() {
     List<String> instanceTypes = virtualizationMappings.apply("hvm");
-    assertThat(instanceTypes).contains("c3.large").hasSize(42);
+    assertThat(instanceTypes).contains("c3.large").hasSize(NUM_HVM_INSTANCE_TYPES);
   }
 
   @Test

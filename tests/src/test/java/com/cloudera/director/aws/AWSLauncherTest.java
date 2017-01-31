@@ -14,11 +14,13 @@
 
 package com.cloudera.director.aws;
 
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ROLE_ARN;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
-import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SESSION_TOKEN;
-import static junit.framework.Assert.assertEquals;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.ACCESS_KEY_ID;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.DELEGATED_ROLE_ARN;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.DELEGATED_ROLE_EXTERNAL_ID;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
+import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SESSION_TOKEN;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 
@@ -67,11 +69,12 @@ public class AWSLauncherTest {
 
     List<ConfigurationProperty> credentialsConfigurationProperties =
         metadata.getCredentialsProviderMetadata().getCredentialsConfigurationProperties();
-    assertEquals(4, credentialsConfigurationProperties.size());
+    assertEquals(5, credentialsConfigurationProperties.size());
     assertTrue(credentialsConfigurationProperties.contains(ACCESS_KEY_ID.unwrap()));
     assertTrue(credentialsConfigurationProperties.contains(SECRET_ACCESS_KEY.unwrap()));
     assertTrue(credentialsConfigurationProperties.contains(SESSION_TOKEN.unwrap()));
-    assertTrue(credentialsConfigurationProperties.contains(ROLE_ARN.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(DELEGATED_ROLE_ARN.unwrap()));
+    assertTrue(credentialsConfigurationProperties.contains(DELEGATED_ROLE_EXTERNAL_ID.unwrap()));
 
     CloudProvider cloudProvider = launcher.createCloudProvider(
         AWSProvider.ID,
@@ -83,6 +86,14 @@ public class AWSLauncherTest {
     CloudProvider cloudProvider2 = launcher.createCloudProvider(
         AWSProvider.ID, new SimpleConfiguration(Collections.<String, String>emptyMap()), Locale.getDefault());
     assertNotSame(cloudProvider, cloudProvider2);
+  }
+
+  @Test
+  public void testLauncherConfigEmpty() {
+    AWSLauncher launcher = new AWSLauncher();
+    launcher.initialize(TEMPORARY_FOLDER.getRoot(), null);
+
+    assertNotNull(launcher.awsTimeouts);
   }
 
   @Test
@@ -101,8 +112,16 @@ public class AWSLauncherTest {
     printWriter.println("awsClient {");
     printWriter.println("  maxErrorRetries: 8");
     printWriter.println("}");
+    printWriter.println("awsTimeouts {");
+    printWriter.println("  ec2 {");
+    printWriter.println("    ebs {");
+    printWriter.println("      availableSeconds: 123");
+    printWriter.println("    }");
+    printWriter.println("  }");
+    printWriter.println("}");
     printWriter.close();
     launcher.initialize(configDir, null);
     assertEquals(8, launcher.awsClientConfig.getMaxErrorRetries());
+    assertEquals(123L, launcher.awsTimeouts.getTimeout("ec2.ebs.availableSeconds").get().longValue());
   }
 }

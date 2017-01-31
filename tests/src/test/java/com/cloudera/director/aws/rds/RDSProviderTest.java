@@ -28,10 +28,11 @@ import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTempla
 import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.spi.v1.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
 import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
-import com.cloudera.director.aws.InstanceTags;
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
-import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProviderChain;
+import com.cloudera.director.aws.Tags.InstanceTags;
+import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProvider;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.rds.AmazonRDSClient;
 import com.cloudera.director.spi.v1.database.DatabaseType;
@@ -44,16 +45,21 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.UUID;
 import java.util.logging.Logger;
 
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 /**
@@ -63,25 +69,64 @@ public class RDSProviderTest {
 
   private static final Logger LOG = Logger.getLogger(RDSProviderTest.class.getName());
 
+  // live test properties
+  private static String testRegion;
+  private static String testDbSubnetGroupName;
+  private static String testVpcSecurityGroupIds;
+  private static String rdsRegionEndpoint;
+
+  private static boolean isLive() {
+    String liveString = System.getProperty("test.aws.live");
+    return Boolean.parseBoolean(liveString);
+  }
+
+  private static String getProperty(Properties properties, String key) {
+    String value = properties.getProperty(key);
+    if (value == null) {
+      fail("Could not find " + key + " in properties file");
+    }
+    return value;
+  }
+
+  @BeforeClass
+  public static void setup() {
+    if (isLive()) {
+      String liveTestPropertyFile = System.getProperty("test.aws.live.file");
+
+      if (liveTestPropertyFile == null) {
+        fail("live test file property is not set");
+      }
+
+      Properties prop = new Properties();
+      try(InputStream input = new FileInputStream(liveTestPropertyFile)) {
+        prop.load(input);
+
+        testRegion = getProperty(prop, "region");
+        testDbSubnetGroupName = getProperty(prop, "db_subnet_group_name");
+        testVpcSecurityGroupIds = getProperty(prop, "vpc_security_group_ids");
+        rdsRegionEndpoint = getProperty(prop, "rds_region_endpoint");
+      } catch (IOException e) {
+        e.printStackTrace();
+        fail("Could not load live test properties file with path " + liveTestPropertyFile);
+      }
+    }
+  }
+
   @Test
   public void testCreateRDSInstance() throws InterruptedException {
-
-    String liveString = System.getProperty("test.aws.live");
-    boolean live = Boolean.parseBoolean(liveString);
-
     boolean success = true;
 
     // TODO change behavior to use profiles to distinguish live tests
-    if (live) {
+    if (isLive()) {
       String username = System.getProperty("user.name");
 
       // Configure provider
       Map<String, String> providerConfigMap = new LinkedHashMap<String, String>();
-      putConfig(providerConfigMap, REGION, "us-west-1");
+      putConfig(providerConfigMap, REGION, testRegion);
 
       // Configure endpoints
       RDSEndpoints endpoints =
-          RDSEndpoints.getTestInstance(ImmutableMap.of("us-west-1", "https://rds.us-west-1.amazonaws.com"),
+          RDSEndpoints.getTestInstance(ImmutableMap.of(testRegion, rdsRegionEndpoint),
               DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure encryption instance classes
@@ -92,14 +137,14 @@ public class RDSProviderTest {
       // Configure credentials
       Map<String, String> credentialsConfigMap = new LinkedHashMap<String, String>();
       SimpleConfiguration credentialsConfig = new SimpleConfiguration(credentialsConfigMap);
-      AWSCredentialsProviderChain providerChain =
-          new AWSCredentialsProviderChainProvider(null).createCredentials(credentialsConfig,
+      AWSCredentialsProvider credentialsProvider =
+          new AWSCredentialsProviderChainProvider().createCredentials(credentialsConfig,
               DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Create provider
       RDSProvider rdsProvider = new RDSProvider(new SimpleConfiguration(providerConfigMap),
-          endpoints, encryptionInstanceClasses, new AmazonRDSClient(providerChain),
-          new AmazonIdentityManagementClient(providerChain), DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+          endpoints, encryptionInstanceClasses, new AmazonRDSClient(credentialsProvider),
+          new AmazonIdentityManagementClient(credentialsProvider), DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure instance template
       Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<String, String>();
@@ -112,15 +157,15 @@ public class RDSProviderTest {
 
       putConfig(instanceTemplateConfigMap, ALLOCATED_STORAGE, "5");
       putConfig(instanceTemplateConfigMap, INSTANCE_CLASS, "db.m3.medium");
-      putConfig(instanceTemplateConfigMap, DB_SUBNET_GROUP_NAME, "all-subnets");
-      putConfig(instanceTemplateConfigMap, VPC_SECURITY_GROUP_IDS, "sg-4af9292f");
+      putConfig(instanceTemplateConfigMap, DB_SUBNET_GROUP_NAME, testDbSubnetGroupName);
+      putConfig(instanceTemplateConfigMap, VPC_SECURITY_GROUP_IDS, testVpcSecurityGroupIds);
 
       putConfig(instanceTemplateConfigMap, BACKUP_RETENTION_PERIOD, "0");
       putConfig(instanceTemplateConfigMap, SKIP_FINAL_SNAPSHOT, "true");
       putConfig(instanceTemplateConfigMap, STORAGE_ENCRYPTED, "true");
 
       Map<String, String> instanceTemplateTags = new LinkedHashMap<String, String>();
-      instanceTemplateTags.put(InstanceTags.OWNER, username);
+      instanceTemplateTags.put(InstanceTags.OWNER.getTagKey(), username);
 
       // Create instance template
       RDSInstanceTemplate instanceTemplate = rdsProvider.createResourceTemplate(

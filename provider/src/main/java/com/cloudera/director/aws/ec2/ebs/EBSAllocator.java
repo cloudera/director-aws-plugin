@@ -15,8 +15,8 @@
 package com.cloudera.director.aws.ec2.ebs;
 
 import static com.google.common.base.Preconditions.checkNotNull;
-import static java.util.Objects.requireNonNull;
 import static com.google.common.base.Preconditions.checkState;
+import static java.util.Objects.requireNonNull;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
@@ -40,7 +40,9 @@ import com.amazonaws.services.ec2.model.Volume;
 import com.amazonaws.services.ec2.model.VolumeAttachment;
 import com.amazonaws.services.ec2.model.VolumeAttachmentState;
 import com.amazonaws.services.ec2.model.VolumeState;
-import com.cloudera.director.aws.Tags;
+import com.cloudera.director.aws.AWSExceptions;
+import com.cloudera.director.aws.AWSTimeouts;
+import com.cloudera.director.aws.Tags.ResourceTags;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
@@ -71,8 +73,17 @@ public class EBSAllocator {
 
   private static final long WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS = 5;
   private static final long WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS = 5;
-  private static final int TIME_OUT_UNTIL_AVAILABLE_SECONDS = 180;
-  private static final int TIME_OUT_UNTIL_ATTACHED_SECONDS = 180;
+
+  /**
+   * The key for the timeout to wait for EBS volumes to become available.
+   */
+  public static final String TIMEOUT_AVAILABLE = "ec2.ebs.availableSeconds";
+  /**
+   * The key for the timeout to wait for EBS volumes to be attached.
+   */
+  public static final String TIMEOUT_ATTACH = "ec2.ebs.attachSeconds";
+
+  private static final long DEFAULT_TIMEOUT_SECONDS = 180L;
 
   private static final String INVALID_STATE_MISSING_KMS_KEY =
       "EBS volumes should only be separately created when they need to be encrypted with a user specified KMS key";
@@ -84,14 +95,23 @@ public class EBSAllocator {
   static final char DEVICE_NAME_START_CHAR = 'f';
 
   private final AmazonEC2Client client;
+  private final long availableTimeoutSeconds;
+  private final long attachTimeoutSeconds;
 
   /**
-   * Construct a new EBS allocator instance.
+   * Constructs a new EBS allocator instance.
    *
    * @param client a pre-configured ec2 client
+   * @param awsTimeouts the AWS timeouts
    */
-  public EBSAllocator(AmazonEC2Client client) {
+  public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts) {
+    checkNotNull(awsTimeouts, "awsTimeouts is null");
+
     this.client = checkNotNull(client, "ec2 client is null");
+    this.availableTimeoutSeconds =
+        awsTimeouts.getTimeout(TIMEOUT_AVAILABLE).or(DEFAULT_TIMEOUT_SECONDS);
+    this.attachTimeoutSeconds =
+        awsTimeouts.getTimeout(TIMEOUT_ATTACH).or(DEFAULT_TIMEOUT_SECONDS);
   }
 
   /**
@@ -264,61 +284,67 @@ public class EBSAllocator {
       throws InterruptedException {
 
     Set<String> volumesToCheck = getAllVolumeIdsWithStatus(createdInstanceVolumes, InstanceEbsVolumes.Status.CREATED);
+
     int numRequestedVolumes = volumesToCheck.size();
     Set<String> volumesAvailable = Sets.newHashSetWithExpectedSize(numRequestedVolumes);
 
-    LOG.info("Waiting for a maximum of {} seconds for volumes to become available", TIME_OUT_UNTIL_AVAILABLE_SECONDS);
+    if (numRequestedVolumes > 0) {
+      LOG.info("Waiting for a maximum of {} seconds for volumes to become available",
+               availableTimeoutSeconds);
 
-    Stopwatch watch = Stopwatch.createStarted();
-    while (watch.elapsed(TimeUnit.SECONDS) < TIME_OUT_UNTIL_AVAILABLE_SECONDS) {
-      DescribeVolumesRequest volumeRequest = new DescribeVolumesRequest()
-          .withVolumeIds(volumesToCheck);
+      Stopwatch watch = Stopwatch.createStarted();
+      while (watch.elapsed(TimeUnit.SECONDS) < availableTimeoutSeconds) {
+        DescribeVolumesRequest volumeRequest = new DescribeVolumesRequest()
+            .withVolumeIds(volumesToCheck);
 
-      try {
-        List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
+        try {
+          List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
 
-        for (Volume volume : volumes) {
-          String id = volume.getVolumeId();
-          VolumeState state = VolumeState.fromValue(volume.getState());
+          for (Volume volume : volumes) {
+            String id = volume.getVolumeId();
+            VolumeState state = VolumeState.fromValue(volume.getState());
 
-          switch (state) {
-            case Creating:
-              break;
-            case Available:
-              volumesToCheck.remove(id);
-              volumesAvailable.add(id);
-              break;
-            case Error:
-              // TODO log why the volume failed which may need a separate api call
-              volumesToCheck.remove(id);
-              break;
-            default:
-              String err = String.format("A requested volume went into an unexpected state %s while waiting " +
-                  "for volume to become available", state);
-              throw new IllegalStateException(String.format(err, state));
+            switch (state) {
+              case Creating:
+                break;
+              case Available:
+                volumesToCheck.remove(id);
+                volumesAvailable.add(id);
+                break;
+              case Error:
+                // TODO log why the volume failed which may need a separate api call
+                volumesToCheck.remove(id);
+                break;
+              default:
+                String err = String.format("A requested volume went into an unexpected state %s while waiting " +
+                                               "for volume to become available", state);
+                throw new IllegalStateException(String.format(err, state));
+            }
+          }
+
+          if (volumesToCheck.isEmpty()) {
+            break;
+          }
+        } catch (AmazonServiceException ex) {
+          // ignore exception when volume isn't found, newly created volumes may not be found right away
+          if (ex.getErrorCode().equals("InvalidVolume.NotFound")) {
+            LOG.info("Requested volume(s) not yet found");
+          } else {
+            throw AWSExceptions.propagate(ex);
           }
         }
 
-        if (volumesToCheck.isEmpty()) {
-          break;
-        }
-      } catch (AmazonServiceException ex) {
-        // ignore exception when volume isn't found, newly created volumes may not be found right away
-        if (ex.getErrorCode().equals("InvalidVolume.NotFound")) {
-          LOG.info("Requested volume(s) not yet found");
-        } else {
-          throw ex;
-        }
+        LOG.info("Waiting on {} out of {} volumes to reach a final state, next check in {} seconds",
+                 volumesToCheck.size(), numRequestedVolumes, WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
+        TimeUnit.SECONDS.sleep(WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
       }
 
-      LOG.info("Waiting on {} out of {} volumes to reach a final state, next check in {} seconds",
-          volumesToCheck.size(), numRequestedVolumes, WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
-      TimeUnit.SECONDS.sleep(WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
-    }
-
-    if (volumesToCheck.size() > 0) {
-      LOG.error("Timed out while waiting for volumes to be created, {} out of {} volumes became available",
-          volumesAvailable.size(), numRequestedVolumes);
+      if (volumesToCheck.size() > 0) {
+        LOG.error("Timed out while waiting for volumes to be created, {} out of {} volumes became available",
+            volumesAvailable.size(), numRequestedVolumes);
+      }
+    } else {
+      LOG.info("Skipping wait for availability because no EBS volumes were created");
     }
 
     // Update the status of each volume to AVAILABLE or FAILED based on the result
@@ -383,6 +409,8 @@ public class EBSAllocator {
           client.attachVolume(volumeRequest);
           requestedAttachments.add(volumeId);
         } catch (AmazonServiceException ex) {
+          AWSExceptions.propagateIfUnrecoverable(ex);
+
           LOG.error(String.format("Failed to attach volume %s to instance %s with device name %s",
               volumeId, ec2InstanceId, deviceName), ex);
         }
@@ -460,41 +488,43 @@ public class EBSAllocator {
   public void addDeleteOnTerminationFlag(List<InstanceEbsVolumes> instanceEbsVolumesList) {
     Set<String> volumesToFlag = getAllVolumeIdsWithStatus(instanceEbsVolumesList, InstanceEbsVolumes.Status.ATTACHED);
 
-    for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
-      String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
+    if (!volumesToFlag.isEmpty()) {
+      for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+        String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
 
-      DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
-          .withAttribute(InstanceAttributeName.BlockDeviceMapping)
-          .withInstanceId(ec2InstanceId);
-
-      List<InstanceBlockDeviceMapping> blockDeviceMappings =
-          client.describeInstanceAttribute(instanceAttributeRequest)
-              .getInstanceAttribute()
-              .getBlockDeviceMappings();
-
-      for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
-        String volumeId = blockDeviceMapping.getEbs().getVolumeId();
-
-        // The block device mapping may have volumes associated with it that were not
-        // provisioned by us. We skip marking those volumes for deletion.
-
-        if (!volumesToFlag.contains(volumeId)) {
-          continue;
-        }
-
-        InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
-            .withEbs(
-                new EbsInstanceBlockDeviceSpecification()
-                    .withDeleteOnTermination(true)
-                    .withVolumeId(volumeId)
-            )
-            .withDeviceName(blockDeviceMapping.getDeviceName());
-
-        ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
-            .withBlockDeviceMappings(updatedSpec)
+        DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
+            .withAttribute(InstanceAttributeName.BlockDeviceMapping)
             .withInstanceId(ec2InstanceId);
 
-        client.modifyInstanceAttribute(modifyRequest);
+        List<InstanceBlockDeviceMapping> blockDeviceMappings =
+            client.describeInstanceAttribute(instanceAttributeRequest)
+                .getInstanceAttribute()
+                .getBlockDeviceMappings();
+
+        for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
+          String volumeId = blockDeviceMapping.getEbs().getVolumeId();
+
+          // The block device mapping may have volumes associated with it that were not
+          // provisioned by us. We skip marking those volumes for deletion.
+
+          if (!volumesToFlag.contains(volumeId)) {
+            continue;
+          }
+
+          InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
+              .withEbs(
+                  new EbsInstanceBlockDeviceSpecification()
+                      .withDeleteOnTermination(true)
+                      .withVolumeId(volumeId)
+              )
+              .withDeviceName(blockDeviceMapping.getDeviceName());
+
+          ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
+              .withBlockDeviceMappings(updatedSpec)
+              .withInstanceId(ec2InstanceId);
+
+          client.modifyInstanceAttribute(modifyRequest);
+        }
       }
     }
   }
@@ -507,13 +537,20 @@ public class EBSAllocator {
    * @throws InterruptedException if the operation is interrupted
    */
   private Collection<String> waitUntilVolumesAttached(Collection<String> volumeIds) throws InterruptedException {
+    checkNotNull(volumeIds);
+    if (volumeIds.isEmpty()) {
+      LOG.info("No volumes are being attached, skipping wait");
+      return Collections.emptySet();
+    }
+
     Set<String> unattachedVolumes = Sets.newHashSet(volumeIds);
     Set<String> attachedVolumes = Sets.newHashSet();
 
-    LOG.info("Waiting for a maximum of {} seconds for volumes to be attached", TIME_OUT_UNTIL_ATTACHED_SECONDS);
+    LOG.info("Waiting for a maximum of {} seconds for volumes to be attached",
+             attachTimeoutSeconds);
 
     Stopwatch watch = Stopwatch.createStarted();
-    while (watch.elapsed(TimeUnit.SECONDS) < TIME_OUT_UNTIL_ATTACHED_SECONDS) {
+    while (watch.elapsed(TimeUnit.SECONDS) < attachTimeoutSeconds) {
       DescribeVolumesRequest volumeRequest = new DescribeVolumesRequest().withVolumeIds(unattachedVolumes);
       List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
 
@@ -556,10 +593,10 @@ public class EBSAllocator {
                          String virtualInstanceId, String volumeId) throws InterruptedException {
     LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
     List<Tag> tags = Lists.newArrayList(
-      new Tag(Tags.RESOURCE_NAME, String.format("%s-%s",
+      new Tag(ResourceTags.RESOURCE_NAME.getTagKey(), String.format("%s-%s",
         template.getInstanceNamePrefix(), virtualInstanceId)),
-      new Tag(Tags.CLOUDERA_DIRECTOR_ID, virtualInstanceId),
-      new Tag(Tags.CLOUDERA_DIRECTOR_TEMPLATE_NAME, template.getName())
+      new Tag(ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), virtualInstanceId),
+      new Tag(ResourceTags.CLOUDERA_DIRECTOR_TEMPLATE_NAME.getTagKey(), template.getName())
     );
     tags.addAll(userDefinedTags);
 

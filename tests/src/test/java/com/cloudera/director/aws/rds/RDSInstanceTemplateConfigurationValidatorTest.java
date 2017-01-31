@@ -20,6 +20,7 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.ENGINE;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.ENGINE_VERSION;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.INSTANCE_CLASS;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.MASTER_USER_PASSWORD;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.MULTI_AZ;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.TYPE;
@@ -38,8 +39,11 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationVali
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.INVALID_IDENTIFIER_REASON_INVALID_CHARACTER;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.INVALID_INSTANCE_CLASS;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.INVALID_PARAMETER_VALUE;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.MASTER_USER_PASSWORD_MISSING;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.MASTER_USER_PASSWORD_TOO_SHORT;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.MAXIMUM_ALLOCATED_STORAGE;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.MINIMUM_ALLOCATED_STORAGE;
+import static com.cloudera.director.aws.rds.RDSInstanceTemplateConfigurationValidator.MINIMUM_MASTER_USER_PASSWORD_LENGTH;
 import static com.cloudera.director.spi.v1.database.DatabaseType.MYSQL;
 import static com.cloudera.director.spi.v1.database.DatabaseType.ORACLE;
 import static com.cloudera.director.spi.v1.model.util.SimpleResourceTemplate.SimpleResourceTemplateConfigurationPropertyToken.NAME;
@@ -67,6 +71,7 @@ import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccu
 import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 import com.google.common.base.Optional;
+import com.google.common.base.Strings;
 import com.google.common.collect.Maps;
 
 import java.util.Collection;
@@ -186,6 +191,31 @@ public class RDSInstanceTemplateConfigurationValidatorTest {
     mockDescribeDBInstances(TEST_DB_IDENTIFIER, true);
     checkIdentifierUniqueness(TEST_DB_IDENTIFIER, NAME);
     verifySingleError(NAME, INSTANCE_ALREADY_EXISTS, TEST_DB_IDENTIFIER);
+  }
+
+  private static final String PASSWORD_BASE = "Aa1@";
+  private static final int PASSWORD_BASE_LEN = PASSWORD_BASE.length();
+
+  @Test
+  public void testCheckMasterUserPassword() {
+    String password = Strings.repeat(PASSWORD_BASE,
+                                     (MINIMUM_MASTER_USER_PASSWORD_LENGTH / PASSWORD_BASE_LEN) + 1);
+    checkMasterUserPassword(password);
+    verifyClean();
+  }
+
+  @Test
+  public void testCheckMasterUserPassword_TooShort() {
+    String password = PASSWORD_BASE_LEN < MINIMUM_MASTER_USER_PASSWORD_LENGTH ?
+        PASSWORD_BASE : PASSWORD_BASE.substring(0, MINIMUM_MASTER_USER_PASSWORD_LENGTH - 2);
+    checkMasterUserPassword(password);
+    verifySingleError(MASTER_USER_PASSWORD, MASTER_USER_PASSWORD_TOO_SHORT, password.length());
+  }
+
+  @Test
+  public void testCheckMasterUserPassword_Missing() {
+    checkMasterUserPassword(null);
+    verifySingleError(MASTER_USER_PASSWORD, MASTER_USER_PASSWORD_MISSING);
   }
 
   @Test
@@ -358,6 +388,20 @@ public class RDSInstanceTemplateConfigurationValidatorTest {
       ConfigurationPropertyToken propertyToken) {
     validator.checkIdentifierUniqueness(rdsClient, identifier, propertyToken, accumulator,
         localizationContext);
+  }
+
+  /**
+   * Invokes checkMasterUserPassword with the specified configuration.
+   *
+   * @param password the master user password
+   */
+  protected void checkMasterUserPassword(String password) {
+    Map<String, String> configMap = Maps.newHashMap();
+    if (password != null) {
+      configMap.put(MASTER_USER_PASSWORD.unwrap().getConfigKey(), password);
+    }
+    Configured configuration = new SimpleConfiguration(configMap);
+    validator.checkMasterUserPassword(configuration, accumulator, localizationContext);
   }
 
   /**
