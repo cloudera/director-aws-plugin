@@ -593,9 +593,12 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
    */
   private static InetAddress getPrivateIpAddress(Instance instance) {
     Preconditions.checkNotNull(instance, "instance is null");
-    InetAddress privateIpAddress;
+    InetAddress privateIpAddress = null;
     try {
-      privateIpAddress = InetAddress.getByName(instance.getPrivateIpAddress());
+      String privateIpString = instance.getPrivateIpAddress();
+      if (privateIpString != null && !privateIpString.isEmpty()) {
+        privateIpAddress = InetAddress.getByName(privateIpString);
+      }
     } catch (UnknownHostException e) {
       throw new IllegalArgumentException("Invalid private IP address", e);
     }

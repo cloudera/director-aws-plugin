@@ -172,7 +172,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   @VisibleForTesting
   static final String INVALID_SUBNET_MSG = "Invalid subnet ID: %s";
 
-  private static final String INVALID_SECURITY_GROUP = "InvalidGroupId";
+  static final String INVALID_SECURITY_GROUP = "InvalidGroup";
   @VisibleForTesting
   static final String INVALID_SECURITY_GROUP_MSG = "Invalid security group ID: %s";
 

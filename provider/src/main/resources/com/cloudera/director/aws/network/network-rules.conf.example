@@ -1,0 +1,82 @@
+# (c) Copyright 2017 Cloudera, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+com.cloudera.director.aws.network.NetworkRules {
+  # Network inbound traffic rules.
+  inbound {
+    # Inbound network traffic should be allowed.
+    allow: [
+      {
+        # Network protocol that the rule applies to.
+        # Here is the supported protocol list: tcp, udp.
+        # And the special value, -1, means all protocols.
+        protocol =
+        # The port that the rule applies to.
+        # The valid port range is [0, 65535]. And the special value, -1, means any port.
+        port =
+        # The IP range list that the rule applies to. Each range should use CIDR notation
+        # to specify a block of IP addresses (both IPv4 and IPv6 addresses are supported).
+        ipRanges = []
+      }
+    ],
+    # Inbound network traffic should be denied.
+    deny: [
+      {
+        # Network protocol that the rule applies to.
+        # Here is the supported protocol list: tcp, udp.
+        # And the special value, -1, means all protocols.
+        protocol =
+        # The port that the rule applies to.
+        # The valid port range is [0, 65535]. And the special value, -1, means any port.
+        port =
+        # The IP range list that the rule applies to. Each range should use CIDR notation
+        # to specify a block of IP addresses (both IPv4 and IPv6 addresses are supported).
+        ipRanges = []
+      }
+    ]
+  },
+  # Network outbound traffic rules.
+  outbound {
+    # Outbound network traffic should be allowed.
+    allow: [
+      {
+        # Network protocol that the rule applies to.
+        # Here is the supported protocol list: tcp, udp.
+        # And the special value, -1, means all protocols.
+        protocol =
+        # The port that the rule applies to.
+        # The valid port range is [0, 65535]. And the special value, -1, means any port.
+        port =
+        # The IP range list that the rule applies to. Each range should use CIDR notation
+        # to specify a block of IP addresses (both IPv4 and IPv6 addresses are supported).
+        ipRanges = []
+      }
+    ],
+    # Outbound network traffic should be denied.
+    deny: [
+      {
+        # Network protocol that the rule applies to.
+        # Here is the supported protocol list: tcp, udp.
+        # And the special value, -1, means all protocols.
+        protocol =
+        # The port that the rule applies to.
+        # The valid port range is [0, 65535]. And the special value, -1, means any port.
+        port =
+        # The IP range list that the rule applies to. Each range should use CIDR notation
+        # to specify a block of IP addresses (both IPv4 and IPv6 addresses are supported).
+        ipRanges = []
+      },
+    ]
+  }
+}

@@ -15,6 +15,8 @@
 package com.cloudera.director.aws.ec2.ebs;
 
 import com.cloudera.director.aws.AWSTimeouts;
+import com.cloudera.director.aws.CustomTagMappings;
+import com.cloudera.director.aws.ec2.EC2TagHelper;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2Client;
 import com.google.common.collect.Lists;
 import org.junit.Before;
@@ -31,7 +33,8 @@ public class EBSAllocatorTest {
 
   @Before
   public void setUp() {
-    ebsAllocator = new EBSAllocator(mock(AmazonEC2Client.class), new AWSTimeouts(null));
+    ebsAllocator = new EBSAllocator(mock(AmazonEC2Client.class), new AWSTimeouts(null),
+        new EC2TagHelper(new CustomTagMappings(null)));
   }
 
   @Test

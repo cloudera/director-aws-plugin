@@ -42,8 +42,8 @@ import com.amazonaws.services.ec2.model.VolumeAttachmentState;
 import com.amazonaws.services.ec2.model.VolumeState;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSTimeouts;
-import com.cloudera.director.aws.Tags.ResourceTags;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
+import com.cloudera.director.aws.ec2.EC2TagHelper;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Stopwatch;
@@ -97,14 +97,17 @@ public class EBSAllocator {
   private final AmazonEC2Client client;
   private final long availableTimeoutSeconds;
   private final long attachTimeoutSeconds;
+  private final EC2TagHelper ec2TagHelper;
 
   /**
    * Constructs a new EBS allocator instance.
    *
-   * @param client a pre-configured ec2 client
-   * @param awsTimeouts the AWS timeouts
+   * @param client       a pre-configured ec2 client
+   * @param awsTimeouts  the AWS timeouts
+   * @param ec2TagHelper the custom tag mappings
    */
-  public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts) {
+  public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts,
+      EC2TagHelper ec2TagHelper) {
     checkNotNull(awsTimeouts, "awsTimeouts is null");
 
     this.client = checkNotNull(client, "ec2 client is null");
@@ -112,6 +115,7 @@ public class EBSAllocator {
         awsTimeouts.getTimeout(TIMEOUT_AVAILABLE).or(DEFAULT_TIMEOUT_SECONDS);
     this.attachTimeoutSeconds =
         awsTimeouts.getTimeout(TIMEOUT_ATTACH).or(DEFAULT_TIMEOUT_SECONDS);
+    this.ec2TagHelper = checkNotNull(ec2TagHelper, "ec2TagHelper is null");
   }
 
   /**
@@ -136,8 +140,8 @@ public class EBSAllocator {
      * Constructor.
      *
      * @param virtualInstanceId the Director virtual instance id
-     * @param ec2InstanceId the AWS EC2 instance id
-     * @param volumeStatuses the volume ids for each instance along with the status of the volume
+     * @param ec2InstanceId     the AWS EC2 instance id
+     * @param volumeStatuses    the volume ids for each instance along with the status of the volume
      */
     public InstanceEbsVolumes(String virtualInstanceId, String ec2InstanceId, Map<String, Status> volumeStatuses) {
       this.virtualInstanceId = requireNonNull(virtualInstanceId, "virtualInstanceId is null");
@@ -192,20 +196,20 @@ public class EBSAllocator {
    * Runs create volume requests for each instance. The number and type
    * of volumes to create are taken from the instance template.
    *
-   * @param template the instance template
+   * @param template                          the instance template
    * @param ec2InstanceIdsByVirtualInstanceId ids of the instances where the key is the virtual
    *                                          instance id and the value is the ec2 instance id
    * @return a list of InstanceEbsVolumes
    */
   public List<InstanceEbsVolumes> createVolumes(EC2InstanceTemplate template,
-                                                BiMap<String, String> ec2InstanceIdsByVirtualInstanceId) {
+      BiMap<String, String> ec2InstanceIdsByVirtualInstanceId) {
     checkState(template.getEbsKmsKeyId().isPresent(), INVALID_STATE_MISSING_KMS_KEY);
 
     Optional<String> templateAvailabilityZone = template.getAvailabilityZone();
 
     String availabilityZone = templateAvailabilityZone.isPresent() ?
-      templateAvailabilityZone.get() :
-      getAvailabilityZoneFromSubnetId(template.getSubnetId());
+        templateAvailabilityZone.get() :
+        getAvailabilityZoneFromSubnetId(template.getSubnetId());
 
     int volumesPerInstance = template.getEbsVolumeCount();
     LOG.info("Requesting {} volumes each for {} instances",
@@ -249,7 +253,7 @@ public class EBSAllocator {
    * Returns all volumes from a list of instance EBS volumes that have the specified status.
    */
   private static Set<String> getAllVolumeIdsWithStatus(List<InstanceEbsVolumes> instanceEbsVolumes,
-                                                       InstanceEbsVolumes.Status status) {
+      InstanceEbsVolumes.Status status) {
     Set<String> volumeIds = Sets.newHashSet();
     for (InstanceEbsVolumes instance : instanceEbsVolumes) {
       for (Map.Entry<String, InstanceEbsVolumes.Status> volume : instance.getVolumeStatuses().entrySet()) {
@@ -265,7 +269,7 @@ public class EBSAllocator {
    * Returns true if all volumes for an instance has the expected status.
    */
   private static boolean instanceHasAllVolumesWithStatus(InstanceEbsVolumes instanceEbsVolumes,
-                                                         InstanceEbsVolumes.Status status) {
+      InstanceEbsVolumes.Status status) {
     int volumeCount = instanceEbsVolumes.getVolumeStatuses().size();
     Set<String> volumesWithExpectedStatus =
         getAllVolumeIdsWithStatus(Collections.singletonList(instanceEbsVolumes), status);
@@ -290,7 +294,7 @@ public class EBSAllocator {
 
     if (numRequestedVolumes > 0) {
       LOG.info("Waiting for a maximum of {} seconds for volumes to become available",
-               availableTimeoutSeconds);
+          availableTimeoutSeconds);
 
       Stopwatch watch = Stopwatch.createStarted();
       while (watch.elapsed(TimeUnit.SECONDS) < availableTimeoutSeconds) {
@@ -317,7 +321,7 @@ public class EBSAllocator {
                 break;
               default:
                 String err = String.format("A requested volume went into an unexpected state %s while waiting " +
-                                               "for volume to become available", state);
+                    "for volume to become available", state);
                 throw new IllegalStateException(String.format(err, state));
             }
           }
@@ -335,7 +339,7 @@ public class EBSAllocator {
         }
 
         LOG.info("Waiting on {} out of {} volumes to reach a final state, next check in {} seconds",
-                 volumesToCheck.size(), numRequestedVolumes, WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
+            volumesToCheck.size(), numRequestedVolumes, WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
         TimeUnit.SECONDS.sleep(WAIT_UNTIL_AVAILABLE_INTERVAL_SECONDS);
       }
 
@@ -371,15 +375,17 @@ public class EBSAllocator {
    * in the AVAILABLE stage, all volumes for that instance will skip tagging and
    * attachment steps.
    *
-   * @param template                the instance template
-   * @param instanceEbsVolumesList  a list of instances with their associated volumes
-   * @param userDefinedTags         list of user defined tags
+   * @param template               the instance template
+   * @param instanceEbsVolumesList a list of instances with their associated volumes
    * @throws InterruptedException if the operation is interrupted
    */
   public List<InstanceEbsVolumes> attachAndTagVolumes(EC2InstanceTemplate template,
-      List<InstanceEbsVolumes> instanceEbsVolumesList, List<Tag> userDefinedTags) throws InterruptedException {
+      List<InstanceEbsVolumes> instanceEbsVolumesList) throws InterruptedException {
 
     Set<String> requestedAttachments = Sets.newHashSet();
+
+    // Pre-compute user-defined tags for efficiency
+    List<Tag> userDefinedTags = ec2TagHelper.getUserDefinedTags(template);
 
     for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
       String virtualInstanceId = instanceEbsVolumes.getVirtualInstanceId();
@@ -547,7 +553,7 @@ public class EBSAllocator {
     Set<String> attachedVolumes = Sets.newHashSet();
 
     LOG.info("Waiting for a maximum of {} seconds for volumes to be attached",
-             attachTimeoutSeconds);
+        attachTimeoutSeconds);
 
     Stopwatch watch = Stopwatch.createStarted();
     while (watch.elapsed(TimeUnit.SECONDS) < attachTimeoutSeconds) {
@@ -555,7 +561,7 @@ public class EBSAllocator {
       List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
 
       for (Volume volume : volumes) {
-        VolumeAttachment attachment =  Iterables.getOnlyElement(volume.getAttachments());
+        VolumeAttachment attachment = Iterables.getOnlyElement(volume.getAttachments());
         VolumeAttachmentState state = VolumeAttachmentState.fromValue(attachment.getState());
 
         if (state == VolumeAttachmentState.Attached) {
@@ -569,7 +575,7 @@ public class EBSAllocator {
       }
 
       LOG.info("Waiting on {} out of {} volumes to be attached, next check in {} seconds",
-        unattachedVolumes.size(), volumeIds.size(), WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS);
+          unattachedVolumes.size(), volumeIds.size(), WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS);
       TimeUnit.SECONDS.sleep(WAIT_UNTIL_ATTACHED_INTERVAL_SECONDS);
     }
 
@@ -590,16 +596,9 @@ public class EBSAllocator {
    * @throws InterruptedException if the operation is interrupted
    */
   public void tagVolume(EC2InstanceTemplate template, List<Tag> userDefinedTags,
-                         String virtualInstanceId, String volumeId) throws InterruptedException {
+      String virtualInstanceId, String volumeId) throws InterruptedException {
     LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
-    List<Tag> tags = Lists.newArrayList(
-      new Tag(ResourceTags.RESOURCE_NAME.getTagKey(), String.format("%s-%s",
-        template.getInstanceNamePrefix(), virtualInstanceId)),
-      new Tag(ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), virtualInstanceId),
-      new Tag(ResourceTags.CLOUDERA_DIRECTOR_TEMPLATE_NAME.getTagKey(), template.getName())
-    );
-    tags.addAll(userDefinedTags);
-
+    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
     client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
   }
 

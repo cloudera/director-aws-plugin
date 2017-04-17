@@ -31,6 +31,7 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
+import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.Tags.InstanceTags;
 import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProvider;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
@@ -144,7 +145,8 @@ public class RDSProviderTest {
       // Create provider
       RDSProvider rdsProvider = new RDSProvider(new SimpleConfiguration(providerConfigMap),
           endpoints, encryptionInstanceClasses, new AmazonRDSClient(credentialsProvider),
-          new AmazonIdentityManagementClient(credentialsProvider), DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+          new AmazonIdentityManagementClient(credentialsProvider), new CustomTagMappings(null),
+          DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure instance template
       Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<String, String>();

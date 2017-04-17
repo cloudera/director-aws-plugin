@@ -30,6 +30,11 @@ public final class Configurations {
   public static final String CONFIGURATION_FILE_NAME = "aws-plugin.conf";
 
   /**
+   * The configuration file name for network rules.
+   */
+  public static final String NETWORK_RULES_FILE_NAME = "network-rules.conf";
+
+  /**
    * The HOCON path prefix for ephemeral device mapping configuration.
    */
   public static final String EPHEMERAL_DEVICE_MAPPINGS_SECTION = "ephemeralDeviceMappings";
@@ -74,4 +79,9 @@ public final class Configurations {
    * The HOCON path prefix for AWS timeouts.
    */
   public static final String AWS_TIMEOUTS_SECTION = "awsTimeouts";
+
+  /**
+   * The HOCON path prefix for custom tag names.
+   */
+  public static final String CUSTOM_TAG_MAPPINGS_SECTION = "customTagMappings";
 }

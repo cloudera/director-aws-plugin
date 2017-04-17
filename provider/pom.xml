@@ -23,7 +23,7 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>aws</artifactId>
-        <version>1.4.0</version>
+        <version>1.4.1</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -39,7 +39,7 @@
         <assertj.version>1.6.0</assertj.version>
         <aws-java-sdk.version>1.11.64</aws-java-sdk.version>
         <director-spi-v1.version>1.0.0</director-spi-v1.version>
-        <guava.version>15.0</guava.version>
+        <guava.version>19.0</guava.version>
         <junit.version>4.12</junit.version>
         <jsr305.version>2.0.2</jsr305.version>
         <mockito.version>1.10.19</mockito.version>

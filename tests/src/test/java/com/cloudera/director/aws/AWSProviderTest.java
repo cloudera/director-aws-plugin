@@ -26,6 +26,7 @@ import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.aws.rds.RDSProvider;
@@ -97,6 +98,9 @@ public class AWSProviderTest {
     AWSFilters awsFilters = AWSFilters.EMPTY_FILTERS;
     AWSTimeouts awsTimeouts = new AWSTimeouts(null);
 
+    // Configure custom tag mappings
+    CustomTagMappings customTagMappings = new CustomTagMappings(null);
+
     HttpProxyParameters httpProxyParameters = new HttpProxyParameters();
 
     LocalizationContext cloudLocalizationContext =
@@ -107,8 +111,8 @@ public class AWSProviderTest {
     AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints,
         rdsEncryptionInstanceClasses, awsClientConfig,
-        awsFilters, awsTimeouts, AWSProvider.getCredentialsProvider(configuration,
-        cloudLocalizationContext),
+        awsFilters, awsTimeouts, customTagMappings, NetworkRules.EMPTY_RULES,
+        AWSProvider.getCredentialsProvider(configuration, cloudLocalizationContext),
         cloudLocalizationContext);
     assertSame(awsProviderMetadata, awsProvider.getProviderMetadata());
 

@@ -32,6 +32,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 
 import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
@@ -448,6 +449,22 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "d2.8xlarge",
             "f1.2xlarge",
             "f1.16xlarge")
+        .build()),
+
+    /**
+     * The user data.
+     *
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html">Instance Metadata and User Data</a>
+     */
+    USER_DATA(new SimpleConfigurationPropertyBuilder()
+        .configKey("userData")
+        .name("User data")
+        .required(false)
+        .widget(ConfigurationProperty.Widget.TEXT)
+        .defaultDescription(
+            "The user data.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html'>More Information</a>"
+        )
         .build());
 
     /**
@@ -566,6 +583,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final Optional<Integer> blockDurationMinutes;
 
   /**
+   * The user data.
+   */
+  private final Optional<String> userData;
+
+  /**
    * Creates an EC2 instance template with the specified parameters.
    *
    * @param name                        the name of the template
@@ -618,6 +640,9 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     this.blockDurationMinutes = useSpotInstances && blockDurationMinutesString != null
         ? Optional.of(Integer.parseInt(blockDurationMinutesString))
         : Optional.<Integer>absent();
+
+    this.userData =
+        Optional.fromNullable(getConfigurationValue(USER_DATA, localizationContext));
   }
 
   /**
@@ -788,5 +813,14 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   public Optional<Integer> getBlockDurationMinutes() {
     return blockDurationMinutes;
+  }
+
+  /**
+   * Returns the user data.
+   *
+   * @return the user data
+   */
+  public Optional<String> getUserData() {
+    return userData;
   }
 }

@@ -30,7 +30,7 @@ import com.amazonaws.services.rds.model.DescribeDBInstancesRequest;
 import com.amazonaws.services.rds.model.DescribeDBInstancesResult;
 import com.amazonaws.services.rds.model.Tag;
 import com.cloudera.director.aws.AWSExceptions;
-import com.cloudera.director.aws.Tags.ResourceTags;
+import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.spi.v1.database.DatabaseServerProviderMetadata;
 import com.cloudera.director.spi.v1.database.util.AbstractDatabaseServerProvider;
@@ -251,6 +251,8 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
 
   private final ConfigurationValidator resourceTemplateConfigurationValidator;
 
+  private final RDSTagHelper rdsTagHelper;
+
   /**
    * Construct a new provider instance and validate all configurations.
    *
@@ -259,6 +261,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
    * @param encryptionInstanceClasses the RDS encryption instance classes
    * @param client                    the RDS client
    * @param identityManagementClient  the AIM client
+   * @param customTagMappings         the custom tag mappings
    * @param cloudLocalizationContext  the parent cloud localization context
    */
   public RDSProvider(Configured configuration,
@@ -266,7 +269,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
       RDSEncryptionInstanceClasses encryptionInstanceClasses,
       AmazonRDSClient client,
       AmazonIdentityManagementClient identityManagementClient,
-      LocalizationContext cloudLocalizationContext) {
+      CustomTagMappings customTagMappings, LocalizationContext cloudLocalizationContext) {
     super(configuration, METADATA, cloudLocalizationContext);
     LocalizationContext localizationContext = getLocalizationContext();
     this.identityManagementClient = checkNotNull(identityManagementClient,
@@ -289,6 +292,8 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
     this.resourceTemplateConfigurationValidator =
         new CompositeConfigurationValidator(METADATA.getResourceTemplateConfigurationValidator(),
             new RDSInstanceTemplateConfigurationValidator(this, encryptionInstanceClasses));
+
+    this.rdsTagHelper = new RDSTagHelper(customTagMappings);
   }
 
   /**
@@ -427,7 +432,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
         .withEngine(template.getEngine())
         .withMasterUsername(template.getAdminUser())
         .withMasterUserPassword(template.getAdminPassword())  // masterPassword in AWS SDK 1.9+
-        .withTags(convertToTags(template.getTags(), template, virtualInstanceId));
+        .withTags(convertToTags(template, virtualInstanceId));
 
     if (template.getEngineVersion().isPresent()) {
       request = request.withEngineVersion(template.getEngineVersion().get());
@@ -479,20 +484,9 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
     return request;
   }
 
-  private Collection<Tag> convertToTags(Map<String, String> templateTags,
-      RDSInstanceTemplate template, String instanceId) {
-    Collection<Tag> tags = Lists.newArrayList();
-    tags.add(new Tag().withKey(ResourceTags.RESOURCE_NAME.getTagKey())
-      .withValue(String.format("%s-%s",
-        template.getInstanceNamePrefix(), instanceId)));
-    tags.add(new Tag().withKey(ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey())
-      .withValue(instanceId));
-    tags.add(new Tag().withKey(ResourceTags.CLOUDERA_DIRECTOR_TEMPLATE_NAME.getTagKey())
-      .withValue(template.getName()));
-    for (Map.Entry<String, String> e : templateTags.entrySet()) {
-      tags.add(new Tag().withKey(e.getKey()).withValue(e.getValue()));
-    }
-    return tags;
+  private Collection<Tag> convertToTags(RDSInstanceTemplate template, String instanceId) {
+    List<Tag> userDefinedTags = rdsTagHelper.getUserDefinedTags(template);
+    return rdsTagHelper.getInstanceTags(template, instanceId, userDefinedTags);
   }
 
   /**

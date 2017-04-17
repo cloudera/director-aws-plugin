@@ -22,11 +22,12 @@ import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.kms.AWSKMSClient;
 import com.amazonaws.services.rds.AmazonRDSClient;
-import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EC2ProviderConfigurationValidator;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.aws.rds.RDSProvider;
@@ -133,6 +134,16 @@ public class AWSProvider extends AbstractCloudProvider {
   private final AWSTimeouts awsTimeouts;
 
   /**
+   * The custom tag mappings.
+   */
+  private final CustomTagMappings customTagMappings;
+
+  /**
+   * The network rules.
+   */
+  private final NetworkRules networkRules;
+
+  /**
    * Creates an AWS provider with the specified parameters.
    *
    * @param configuration                the configuration
@@ -144,19 +155,26 @@ public class AWSProvider extends AbstractCloudProvider {
    * @param awsClientConfig              the AWS client configuration
    * @param awsFilters                   the AWS filters
    * @param awsTimeouts                  the AWS timeouts
+   * @param customTagMappings            the custom tag mappings
+   * @param networkRules                 the network rules
    * @param rootLocalizationContext      the root localization context
    */
-  public AWSProvider(Configured configuration, EphemeralDeviceMappings ephemeralDeviceMappings,
-                     EBSMetadata ebsMetadata,
-                     VirtualizationMappings virtualizationMappings, RDSEndpoints rdsEndpoints,
-                     RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses,
-                     AWSClientConfig awsClientConfig, AWSFilters awsFilters,
-                     AWSTimeouts awsTimeouts, LocalizationContext rootLocalizationContext) {
+  public AWSProvider(Configured configuration,
+      EphemeralDeviceMappings ephemeralDeviceMappings,
+      EBSMetadata ebsMetadata,
+      VirtualizationMappings virtualizationMappings,
+      RDSEndpoints rdsEndpoints,
+      RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses,
+      AWSClientConfig awsClientConfig, AWSFilters awsFilters,
+      AWSTimeouts awsTimeouts,
+      CustomTagMappings customTagMappings,
+      NetworkRules networkRules,
+      LocalizationContext rootLocalizationContext) {
     this(configuration, ephemeralDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses,
         awsClientConfig,
-        awsFilters, awsTimeouts, getCredentialsProvider(configuration,
-            METADATA.getLocalizationContext(rootLocalizationContext)),
+        awsFilters, awsTimeouts, customTagMappings, networkRules,
+        getCredentialsProvider(configuration, METADATA.getLocalizationContext(rootLocalizationContext)),
         rootLocalizationContext);
   }
 
@@ -172,18 +190,25 @@ public class AWSProvider extends AbstractCloudProvider {
    * @param awsClientConfig              the AWS client configuration
    * @param awsFilters                   the AWS filters
    * @param awsTimeouts                  the AWS timeouts
+   * @param customTagMappings            the custom tag mappings
+   * @param networkRules                 the network rules
    * @param credentialsProvider          the AWS credentials provider
    * @param rootLocalizationContext      the root localization context
    */
   @SuppressWarnings({"PMD.UnusedFormalParameter", "UnusedParameters"})
-  public AWSProvider(Configured configuration, EphemeralDeviceMappings ephemeralDeviceMappings,
-                     EBSMetadata ebsMetadata,
-                     VirtualizationMappings virtualizationMappings, RDSEndpoints rdsEndpoints,
-                     RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses,
-                     AWSClientConfig awsClientConfig, AWSFilters awsFilters,
-                     AWSTimeouts awsTimeouts,
-                     AWSCredentialsProvider credentialsProvider,
-                     LocalizationContext rootLocalizationContext) {
+  public AWSProvider(Configured configuration,
+      EphemeralDeviceMappings ephemeralDeviceMappings,
+      EBSMetadata ebsMetadata,
+      VirtualizationMappings virtualizationMappings,
+      RDSEndpoints rdsEndpoints,
+      RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses,
+      AWSClientConfig awsClientConfig,
+      AWSFilters awsFilters,
+      AWSTimeouts awsTimeouts,
+      CustomTagMappings customTagMappings,
+      NetworkRules networkRules,
+      AWSCredentialsProvider credentialsProvider,
+      LocalizationContext rootLocalizationContext) {
     super(METADATA, rootLocalizationContext);
     this.credentialsProvider =
         checkNotNull(credentialsProvider, "credentialsProvider is null");
@@ -195,6 +220,8 @@ public class AWSProvider extends AbstractCloudProvider {
     this.awsClientConfig = awsClientConfig;
     this.awsFilters = checkNotNull(awsFilters, "awsFilters is null");
     this.awsTimeouts = checkNotNull(awsTimeouts, "awsTimeouts is null");
+    this.customTagMappings = checkNotNull(customTagMappings, "customTagMappings is null");
+    this.networkRules = checkNotNull(networkRules, "networkRules is null");
   }
 
   @Override
@@ -242,7 +269,7 @@ public class AWSProvider extends AbstractCloudProvider {
   protected EC2Provider createEC2Provider(Configured target) {
     ClientConfiguration clientConfiguration = getClientConfiguration();
     return new EC2Provider(target, ephemeralDeviceMappings, ebsMetadata,
-        virtualizationMappings, awsFilters, awsTimeouts,
+        virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
         new AmazonEC2Client(credentialsProvider, clientConfiguration),
         new AmazonIdentityManagementClient(credentialsProvider, clientConfiguration),
         new AWSKMSClient(credentialsProvider, clientConfiguration),
@@ -260,7 +287,7 @@ public class AWSProvider extends AbstractCloudProvider {
     return new RDSProvider(target, rdsEndpoints, rdsEncryptionInstanceClasses,
         new AmazonRDSClient(credentialsProvider, clientConfiguration),
         new AmazonIdentityManagementClient(credentialsProvider, clientConfiguration),
-        getLocalizationContext());
+        customTagMappings, getLocalizationContext());
   }
 
   /**

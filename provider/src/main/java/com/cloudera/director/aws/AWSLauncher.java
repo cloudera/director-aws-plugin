@@ -21,9 +21,10 @@ import static com.cloudera.director.aws.rds.RDSEndpoints.RDSEndpointsConfigPrope
 
 import com.cloudera.director.aws.common.ConfigFragmentWrapper;
 import com.cloudera.director.aws.common.ResourceBundleLocalizationContext;
-import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
@@ -173,6 +174,11 @@ public class AWSLauncher extends AbstractLauncher {
                            null : config.getConfig(Configurations.AWS_TIMEOUTS_SECTION));
   }
 
+  private static CustomTagMappings getCustomTagMappings(Config config) {
+    return new CustomTagMappings(config == null || !config.hasPath(Configurations.CUSTOM_TAG_MAPPINGS_SECTION) ?
+        null : config.getConfig(Configurations.CUSTOM_TAG_MAPPINGS_SECTION));
+  }
+
   private static <T extends ConfigurationPropertyToken> Configured getConfiguration(Config config,
       String section, T[] configurationPropertyTokens) {
     if (config == null) {
@@ -211,6 +217,11 @@ public class AWSLauncher extends AbstractLauncher {
   @VisibleForTesting
   protected AWSTimeouts awsTimeouts;
 
+  @VisibleForTesting
+  protected CustomTagMappings customTagMappings;
+
+  private NetworkRules networkRules;
+
   /**
    * Creates an AWS launcher.
    */
@@ -247,6 +258,23 @@ public class AWSLauncher extends AbstractLauncher {
         cloudLocalizationContext);
     awsFilters = getAWSFilterConfig(config);
     awsTimeouts = getAWSTimeouts(config);
+    customTagMappings = getCustomTagMappings(config);
+    networkRules = getNetworkRules(configurationDirectory);
+  }
+
+  /**
+   * Retrieves the network rules from its configuration file.
+   *
+   * @param configurationDirectory the directory holding the network rules configuration file
+   * @return the network rules
+   */
+  private NetworkRules getNetworkRules(File configurationDirectory) {
+    File configFile = new File(configurationDirectory, Configurations.NETWORK_RULES_FILE_NAME);
+    Config config = null;
+    if (configFile.canRead()) {
+      config = parseConfigFile(configFile);
+    }
+    return NetworkRules.fromConfig(config);
   }
 
   @Override
@@ -257,7 +285,7 @@ public class AWSLauncher extends AbstractLauncher {
     }
     return new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig,
-        awsFilters, awsTimeouts, getLocalizationContext(locale));
+        awsFilters, awsTimeouts, customTagMappings, networkRules, getLocalizationContext(locale));
   }
 
   /**

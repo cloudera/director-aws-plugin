@@ -28,8 +28,10 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION;
 import static com.cloudera.director.spi.v1.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeFalse;
@@ -41,8 +43,11 @@ import static org.mockito.Mockito.when;
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
+import com.cloudera.director.aws.CustomTagMappings;
+import com.cloudera.director.aws.Tags;
 import com.cloudera.director.aws.Tags.InstanceTags;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.shaded.com.amazonaws.AmazonServiceException;
 import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProvider;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2Client;
@@ -50,12 +55,16 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Describ
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeVolumesRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeVolumesResult;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceAttribute;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceAttributeName;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.SpotInstanceRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Tag;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Volume;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.VolumeState;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.AWSKMSClient;
+import com.cloudera.director.aws.shaded.com.typesafe.config.Config;
+import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigValueFactory;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyValue;
 import com.cloudera.director.spi.v1.model.Configured;
@@ -100,6 +109,16 @@ public class EC2ProviderLiveTest {
 
   private static final Logger LOG = Logger.getLogger(EC2ProviderLiveTest.class.getName());
 
+  private static final String CUSTOM_TEST_NAME_TAG = "TestName";
+  private static final String EXTRA_TAG = "extra";
+  private static final String CUSTOM_TEST_EXTRA_TAG = "TestExtra";
+
+  private static final Config CUSTOM_TAG_MAPPING_CONFIG =
+      ConfigValueFactory.fromMap(ImmutableMap.<String, String>builder()
+          .put(Tags.ResourceTags.RESOURCE_NAME.getTagKey(), CUSTOM_TEST_NAME_TAG)
+          .put(EXTRA_TAG, CUSTOM_TEST_EXTRA_TAG)
+          .build()).toConfig();
+
   private static boolean isLive() {
     String liveString = System.getProperty("test.aws.live");
     return Boolean.parseBoolean(liveString);
@@ -132,6 +151,7 @@ public class EC2ProviderLiveTest {
     // Configure filters and timeouts
     AWSFilters awsFilters = AWSFilters.EMPTY_FILTERS;
     AWSTimeouts awsTimeouts = new AWSTimeouts(null);
+    CustomTagMappings customTagMappings = new CustomTagMappings(CUSTOM_TAG_MAPPING_CONFIG);
 
     return new EC2Provider(configuration,
                            ephemeralDeviceMappings,
@@ -139,6 +159,8 @@ public class EC2ProviderLiveTest {
                            virtualizationMappings,
                            awsFilters,
                            awsTimeouts,
+                           customTagMappings,
+                           NetworkRules.EMPTY_RULES,
                            new AmazonEC2Client(credentialsProvider),
                            new AmazonIdentityManagementClient(credentialsProvider),
                            new AWSKMSClient(credentialsProvider),
@@ -232,6 +254,8 @@ public class EC2ProviderLiveTest {
     private static final String VOLUME_NOT_FOUND_ERR_CODE = "InvalidVolume.NotFound";
 
     private static final Integer DEFAULT_BLOCK_DURATION_MINUTES = 60;
+
+    private static final String TEST_USER_DATA = "Test user data";
 
     // live test properties
     private static String testRegion;
@@ -362,6 +386,7 @@ public class EC2ProviderLiveTest {
       // Create provider
       EC2Provider ec2Provider = getEc2Provider(new SimpleConfiguration(providerConfigMap),
                                                credentialsProvider);
+      CustomTagMappings customTagMappings = ec2Provider.getEC2TagHelper().getCustomTagMappings();
 
       // Configure instance template
       Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<>();
@@ -375,8 +400,10 @@ public class EC2ProviderLiveTest {
       putConfig(instanceTemplateConfigMap, SPOT_BID_USD_PER_HR, spotBidUSDPerHour);
       putConfig(instanceTemplateConfigMap, BLOCK_DURATION_MINUTES, blockDurationMinutes == null ?
           null : blockDurationMinutes.toString());
+      putConfig(instanceTemplateConfigMap, USER_DATA, TEST_USER_DATA);
       Map<String, String> instanceTemplateTags = new LinkedHashMap<>();
       instanceTemplateTags.put(InstanceTags.OWNER.getTagKey(), username);
+      instanceTemplateTags.put(EXTRA_TAG, "foo");
 
       int ebsVolumeCount = 0;
       int ebsVolumeSizeGiB = 500;
@@ -386,7 +413,8 @@ public class EC2ProviderLiveTest {
       Set<String> mountedEbsVolumes = Sets.newHashSet();
       if (useEbsVolumes) {
         if (terminateImmediately) {
-          ebsVolumeCount = 20;
+          ebsVolumeSizeGiB = 2000;
+          ebsVolumeCount = 25;
         } else {
           ebsVolumeCount = 2;
         }
@@ -416,6 +444,14 @@ public class EC2ProviderLiveTest {
       try {
         for (EC2Instance instance : instances) {
           LOG.info("Created " + spotString + "instance: " + instance.getProperties());
+
+          try {
+            InstanceAttribute instanceAttribute = ec2Provider.describeInstanceAttribute(
+                instance.unwrap().getInstanceId(), InstanceAttributeName.UserData);
+            assertEquals(TEST_USER_DATA, instanceAttribute.getUserData());
+          } catch (AmazonServiceException e) {
+            LOG.warning("Cannot verify user data.");
+          }
         }
 
         // Wait for instances to be running
@@ -481,7 +517,8 @@ public class EC2ProviderLiveTest {
                 // EBS volumes should also have the tags from instance template
                 Map<String, String> volumeTags = listTagToMap(volume.getTags());
                 for (Map.Entry<String, String> entry : instanceTemplateTags.entrySet()) {
-                  assertTrue(volumeTags.containsKey(entry.getKey()));
+                  String customTagName = customTagMappings.getCustomTagName(entry.getKey());
+                  assertTrue(volumeTags.containsKey(customTagName));
                   assertTrue(volumeTags.containsValue(entry.getValue()));
                 }
               } else if (volumeType.equals(ROOT_VOLUME_TYPE.unwrap().getDefaultValue())) {
