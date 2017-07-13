@@ -15,11 +15,8 @@
 package com.cloudera.director.aws.rds;
 
 import static com.cloudera.director.aws.rds.RDSEngine.getSupportedEngineNamesByDatabaseType;
-import static com.cloudera.director.aws.rds.RDSProvider.RDSProviderConfigurationPropertyToken.REGION;
-import static com.cloudera.director.aws.rds.RDSProvider.RDSProviderConfigurationPropertyToken.REGION_ENDPOINT;
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
-import com.amazonaws.AmazonClientException;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.rds.AmazonRDSClient;
 import com.amazonaws.services.rds.model.CreateDBInstanceRequest;
@@ -29,9 +26,9 @@ import com.amazonaws.services.rds.model.DeleteDBInstanceRequest;
 import com.amazonaws.services.rds.model.DescribeDBInstancesRequest;
 import com.amazonaws.services.rds.model.DescribeDBInstancesResult;
 import com.amazonaws.services.rds.model.Tag;
-import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.CustomTagMappings;
-import com.cloudera.director.aws.ec2.EC2Provider;
+import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.common.AmazonRDSClientProvider;
 import com.cloudera.director.spi.v1.database.DatabaseServerProviderMetadata;
 import com.cloudera.director.spi.v1.database.util.AbstractDatabaseServerProvider;
 import com.cloudera.director.spi.v1.database.util.SimpleDatabaseServerProviderMetadata;
@@ -41,10 +38,8 @@ import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.Resource;
-import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionDetails;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v1.model.util.CompositeConfigurationValidator;
 import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
@@ -174,72 +169,10 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
       this.configurationProperty = configurationProperty;
     }
 
+    @Override
     public ConfigurationProperty unwrap() {
       return configurationProperty;
     }
-  }
-
-  /**
-   * Configures the specified client.
-   *
-   * @param configuration               the provider configuration
-   * @param accumulator                 the exception accumulator
-   * @param client                      the RDS client
-   * @param endpoints                   the RDS endpoints
-   * @param providerLocalizationContext the resource provider localization context
-   * @param verify                      whether to verify the configuration by making an API call
-   * @return the configured client
-   * @throws InvalidCredentialsException    if the supplied credentials are invalid
-   * @throws TransientProviderException     if a transient exception occurs communicating with the
-   *                                        provider
-   * @throws UnrecoverableProviderException if an unrecoverable exception occurs communicating with
-   *                                        the provider
-   */
-  protected static AmazonRDSClient configureClient(Configured configuration,
-      PluginExceptionConditionAccumulator accumulator,
-      AmazonRDSClient client,
-      RDSEndpoints endpoints,
-      LocalizationContext providerLocalizationContext, boolean verify) {
-    checkNotNull(client, "client is null");
-    try {
-      String regionEndpoint =
-          configuration.getConfigurationValue(REGION_ENDPOINT, providerLocalizationContext);
-      if (regionEndpoint != null) {
-        LOG.info("<< Using configured region endpoint: {}", regionEndpoint);
-      } else {
-        String region = configuration.getConfigurationValue(REGION, providerLocalizationContext);
-        if (region == null) {
-          region = configuration.getConfigurationValue(
-              EC2Provider.EC2ProviderConfigurationPropertyToken.REGION,
-              providerLocalizationContext);
-        }
-        regionEndpoint = getEndpointForRegion(checkNotNull(endpoints, "endpoints is null"),
-            region);
-      }
-      client.setEndpoint(regionEndpoint);
-
-      if (verify) {
-        // Attempt to use client, to validate credentials and connectivity
-        client.describeDBSecurityGroups();
-      }
-
-    } catch (AmazonClientException e) {
-      throw AWSExceptions.propagate(e);
-    } catch (IllegalArgumentException e) {
-      accumulator.addError(REGION.unwrap().getConfigKey(), e.getMessage());
-    }
-    return client;
-  }
-
-  private static String getEndpointForRegion(RDSEndpoints endpoints, String regionName) {
-    checkNotNull(regionName, "regionName is null");
-    String endpoint = endpoints.apply(regionName);
-    if (endpoint == null) {
-      throw new IllegalArgumentException(String.format(
-          "Endpoint unknown for region %s. Please configure it as a custom " +
-              "RDS endpoint.", regionName));
-    }
-    return endpoint;
   }
 
   private final AmazonRDSClient client;
@@ -256,28 +189,30 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
   /**
    * Construct a new provider instance and validate all configurations.
    *
-   * @param configuration             the configuration
-   * @param endpoints                 the RDS endpoints
-   * @param encryptionInstanceClasses the RDS encryption instance classes
-   * @param client                    the RDS client
-   * @param identityManagementClient  the AIM client
-   * @param customTagMappings         the custom tag mappings
-   * @param cloudLocalizationContext  the parent cloud localization context
+   * @param configuration                     the configuration
+   * @param encryptionInstanceClasses         the RDS encryption instance classes
+   * @param clientProvider                    the RDS client provider
+   * @param identityManagementClientProvider  the AIM client provider
+   * @param customTagMappings                 the custom tag mappings
+   * @param cloudLocalizationContext          the parent cloud localization context
    */
-  public RDSProvider(Configured configuration,
-      RDSEndpoints endpoints,
+  public RDSProvider(
+      Configured configuration,
       RDSEncryptionInstanceClasses encryptionInstanceClasses,
-      AmazonRDSClient client,
-      AmazonIdentityManagementClient identityManagementClient,
-      CustomTagMappings customTagMappings, LocalizationContext cloudLocalizationContext) {
+      AmazonRDSClientProvider clientProvider,
+      AmazonIdentityManagementClientProvider identityManagementClientProvider,
+      CustomTagMappings customTagMappings,
+      LocalizationContext cloudLocalizationContext) {
     super(configuration, METADATA, cloudLocalizationContext);
     LocalizationContext localizationContext = getLocalizationContext();
-    this.identityManagementClient = checkNotNull(identityManagementClient,
-        "identityManagementClient is null");
-
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
-    this.client =
-        configureClient(configuration, accumulator, client, endpoints, localizationContext, false);
+
+    this.client = requireNonNull(clientProvider, "clientProvider is null")
+        .getClient(configuration, accumulator, localizationContext, false);
+    this.identityManagementClient = requireNonNull(
+        identityManagementClientProvider, "identityManagementClientProvider is null")
+        .getClient(configuration, accumulator, localizationContext, false);
+
     if (accumulator.hasError()) {
       PluginExceptionDetails pluginExceptionDetails =
           new PluginExceptionDetails(accumulator.getConditionsByKey());

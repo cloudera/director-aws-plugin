@@ -70,13 +70,17 @@ import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
 import com.google.common.base.Throwables;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -175,6 +179,10 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   static final String INVALID_SECURITY_GROUP = "InvalidGroup";
   @VisibleForTesting
   static final String INVALID_SECURITY_GROUP_MSG = "Invalid security group ID: %s";
+
+  @VisibleForTesting
+  static final String INVALID_SECURITY_GROUP_VPC_MSG =
+      "Security group %s and subnet %s belong to different networks.";
 
   private static final String INVALID_KEY_PAIR = "InvalidKeyPair";
   @VisibleForTesting
@@ -281,8 +289,9 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     AWSKMSClient kmsClient = provider.getKmsClient();
 
     checkImage(ec2Client, configuration, accumulator, localizationContext);
-    checkSubnetId(ec2Client, configuration, accumulator, localizationContext);
-    checkSecurityGroupIds(ec2Client, configuration, accumulator, localizationContext);
+    Map<String, String> vpcSubnetMap = checkSubnetId(ec2Client, configuration, accumulator, localizationContext);
+    Map<String, Set<String>> vpcSecurityGroupMap = checkSecurityGroupIds(ec2Client, configuration, accumulator, localizationContext);
+    checkVpc(vpcSubnetMap, vpcSecurityGroupMap, accumulator, localizationContext);
     checkAvailabilityZone(ec2Client, configuration, accumulator, localizationContext);
     checkPlacementGroup(ec2Client, configuration, accumulator, localizationContext);
     checkTenancy(configuration, accumulator, localizationContext);
@@ -535,12 +544,14 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
    * @param configuration       the configuration to be validated
    * @param accumulator         the exception condition accumulator
    * @param localizationContext the localization context
+   *
+   * @return the vpc id to subnet id mapping
    */
   @VisibleForTesting
-  void checkSubnetId(AmazonEC2Client client,
-      Configured configuration,
-      PluginExceptionConditionAccumulator accumulator,
-      LocalizationContext localizationContext) {
+  Map<String, String> checkSubnetId(AmazonEC2Client client,
+                                    Configured configuration,
+                                    PluginExceptionConditionAccumulator accumulator,
+                                    LocalizationContext localizationContext) {
     String subnetId = configuration.getConfigurationValue(SUBNET_ID, localizationContext);
     LOG.info(">> Describing subnet '{}'", subnetId);
 
@@ -549,6 +560,9 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
           new DescribeSubnetsRequest().withSubnetIds(subnetId));
       checkCount(accumulator, SUBNET_ID, localizationContext, "Subnet",
           result.getSubnets());
+      if (result.getSubnets().size() == 1) {
+        return ImmutableMap.of(Iterables.getOnlyElement(result.getSubnets()).getVpcId(), subnetId);
+      }
     } catch (AmazonServiceException e) {
       if (e.getErrorCode().startsWith(INVALID_SUBNET_ID)) {
         addError(accumulator, SUBNET_ID, localizationContext,
@@ -557,6 +571,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         throw Throwables.propagate(e);
       }
     }
+    return ImmutableMap.of();
   }
 
   /**
@@ -566,9 +581,11 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
    * @param configuration       the configuration to be validated
    * @param accumulator         the exception condition accumulator
    * @param localizationContext the localization context
+   *
+   * @return the vpc id to security group ids mapping
    */
   @VisibleForTesting
-  void checkSecurityGroupIds(AmazonEC2Client client,
+  Map<String, Set<String>> checkSecurityGroupIds(AmazonEC2Client client,
       Configured configuration,
       PluginExceptionConditionAccumulator accumulator,
       LocalizationContext localizationContext) {
@@ -576,6 +593,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     List<String> securityGroupsIds = EC2InstanceTemplate.CSV_SPLITTER.splitToList(
         configuration.getConfigurationValue(SECURITY_GROUP_IDS, localizationContext));
 
+    Map<String, Set<String>> vpcSgMap = Maps.newHashMap();
     for (String securityGroupId : securityGroupsIds) {
       LOG.info(">> Describing security group '{}'", securityGroupId);
 
@@ -585,6 +603,15 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         checkCount(accumulator, SECURITY_GROUP_IDS, localizationContext, securityGroupId,
             result.getSecurityGroups()
         );
+        if (result.getSecurityGroups().size() == 1) {
+          String vpcId = Iterables.getOnlyElement(result.getSecurityGroups()).getVpcId();
+          Set<String> sgSet = vpcSgMap.get(vpcId);
+          if (sgSet == null) {
+            sgSet = Sets.newHashSet();
+            vpcSgMap.put(vpcId, sgSet);
+          }
+          sgSet.add(securityGroupId);
+        }
       } catch (AmazonServiceException e) {
         if (e.getErrorCode().startsWith(INVALID_SECURITY_GROUP)) {
           addError(accumulator, SECURITY_GROUP_IDS, localizationContext,
@@ -593,6 +620,41 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
           throw Throwables.propagate(e);
         }
       }
+    }
+    return vpcSgMap;
+  }
+
+  /**
+   * Validates given security groups and subnet are in the same vpc.
+   */
+  @VisibleForTesting
+  void checkVpc(Map<String, String> vpcSubnetMap,
+                Map<String, Set<String>> vpcSecurityGroupMap,
+                PluginExceptionConditionAccumulator accumulator,
+                LocalizationContext localizationContext) {
+    if (vpcSubnetMap.size() != 1) {
+      LOG.error("Skipping vpc validation due to subnet validation error");
+      return;
+    }
+
+    if (vpcSecurityGroupMap.isEmpty()) {
+      LOG.error("Skipping vpc validation due to security group validation error");
+      return;
+    }
+
+    Map.Entry<String, String> vpcSubnetEntry = Iterables.getOnlyElement(vpcSubnetMap.entrySet());
+    String vpcId = vpcSubnetEntry.getKey();
+    String subnetId = vpcSubnetEntry.getValue();
+
+    Set<String> vpcDiff = Sets.difference(vpcSecurityGroupMap.keySet(), ImmutableSet.of(vpcId));
+    if (!vpcDiff.isEmpty()) {
+      Set<String> invalidSgs = Sets.newHashSet();
+      for (String invalidVpcId : vpcDiff) {
+        invalidSgs.addAll(vpcSecurityGroupMap.get(invalidVpcId));
+      }
+      addError(accumulator, SECURITY_GROUP_IDS, localizationContext,
+          null, INVALID_SECURITY_GROUP_VPC_MSG, invalidSgs, subnetId
+      );
     }
   }
 

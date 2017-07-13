@@ -34,7 +34,13 @@ public class AWSClientConfig {
 
   private static final Logger LOG = LoggerFactory.getLogger(AWSClientConfig.class);
 
-  public static final int DEFAULT_MAX_ERROR_RETRIES = 7;
+  // The default backoff strategy is exponential + jitter with a 100ms delay:
+  // jitter(min(2^retryNumber * 100, 20000) milliseconds. Worst case should be 165.5 seconds assuming the jitter
+  // always picks the maximum possible wait time.
+  // For throttling issues, a larger delay is applied (500ms) on top of this, so:
+  // jitter(min(2^retryNumber * 500, 20000) milliseconds. Worse case should be 211.5 seconds assuming the jitter
+  // always picks the maximum possible wait time.
+  public static final int DEFAULT_MAX_ERROR_RETRIES = 15;
   public static final int DEFAULT_CONNECTION_TIMEOUT_MILLIS = 10000;
   public static final ClientConfiguration DEFAULT_CLIENT_CONFIG = new ClientConfiguration()
       .withMaxErrorRetry(DEFAULT_MAX_ERROR_RETRIES)
@@ -135,6 +141,7 @@ public class AWSClientConfig {
    * Creates AWS client config with default configuration.
    */
   public AWSClientConfig() {
+    httpProxyParameters = new HttpProxyParameters();
   }
 
   /**

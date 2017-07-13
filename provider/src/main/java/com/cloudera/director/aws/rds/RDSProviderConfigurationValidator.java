@@ -14,9 +14,9 @@
 
 package com.cloudera.director.aws.rds;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
-import com.amazonaws.services.rds.AmazonRDSClient;
+import com.cloudera.director.aws.common.AmazonRDSClientProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
@@ -28,29 +28,22 @@ import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccu
 public class RDSProviderConfigurationValidator implements ConfigurationValidator {
 
   /**
-   * The RDS client.
+   * The RDS client provider.
    */
-  private final AmazonRDSClient client;
-
-  /**
-   * The RDS endpoints.
-   */
-  private final RDSEndpoints endpoints;
+  private final AmazonRDSClientProvider clientProvider;
 
   /**
    * Creates an RDS provider configuration validator with the specified parameters.
    *
-   * @param client    the RDS client
-   * @param endpoints the RDS endpoints
+   * @param clientProvider    the RDS client provider
    */
-  public RDSProviderConfigurationValidator(AmazonRDSClient client, RDSEndpoints endpoints) {
-    this.client = checkNotNull(client, "client is null");
-    this.endpoints = checkNotNull(endpoints, "endpoints is null");
+  public RDSProviderConfigurationValidator(AmazonRDSClientProvider clientProvider) {
+    this.clientProvider = requireNonNull(clientProvider, "clientProvider is null");
   }
 
   @Override
   public void validate(String name, Configured configuration,
       PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
-    RDSProvider.configureClient(configuration, accumulator, client, endpoints, localizationContext, true);
+    clientProvider.getClient(configuration, accumulator, localizationContext, true);
   }
 }

@@ -23,7 +23,7 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>aws</artifactId>
-        <version>1.4.1</version>
+        <version>1.4.2</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -37,7 +37,7 @@
 
         <launcher-class>com.cloudera.director.aws.AWSLauncher</launcher-class>
         <assertj.version>1.6.0</assertj.version>
-        <aws-java-sdk.version>1.11.64</aws-java-sdk.version>
+        <aws-java-sdk.version>1.11.125</aws-java-sdk.version>
         <director-spi-v1.version>1.0.0</director-spi-v1.version>
         <guava.version>19.0</guava.version>
         <junit.version>4.12</junit.version>
@@ -51,6 +51,8 @@
         <maven-pmd-plugin.version>3.7</maven-pmd-plugin.version>
         <findbugs-maven-plugin.version>3.0.3</findbugs-maven-plugin.version>
         <java.version>1.7</java.version>
+        <aspectj.version>1.8.1</aspectj.version>
+        <aspectj-maven-plugin.version>1.8</aspectj-maven-plugin.version>
     </properties>
 
     <dependencies>
@@ -128,6 +130,18 @@
             <scope>provided</scope>
         </dependency>
 
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+            <version>${aspectj.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjrt</artifactId>
+            <version>${aspectj.version}</version>
+        </dependency>
     </dependencies>
 
     <repositories>
@@ -230,6 +244,14 @@
                             <pattern>org.apache.http</pattern>
                             <shadedPattern>${shade-prefix}.org.apache.http</shadedPattern>
                         </relocation>
+                        <relocation><!-- aspectj -->
+                            <pattern>org.aspectj</pattern>
+                            <shadedPattern>${shade-prefix}.org.aspectj</shadedPattern>
+                        </relocation>
+                        <relocation><!-- still aspectj -->
+                            <pattern>aj.org</pattern>
+                            <shadedPattern>${shade-prefix}.aj.org</shadedPattern>
+                        </relocation>
                     </relocations>
                     <transformers>
                         <transformer
@@ -241,6 +263,28 @@
                         <phase>package</phase>
                         <goals>
                             <goal>shade</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>aspectj-maven-plugin</artifactId>
+                <version>${aspectj-maven-plugin.version}</version>
+                <configuration>
+                    <showWeaveInfo>true</showWeaveInfo>
+                    <source>${java.version}</source>
+                    <target>${java.version}</target>
+                    <Xlint>ignore</Xlint>
+                    <complianceLevel>${java.version}</complianceLevel>
+                    <encoding>UTF-8</encoding>
+                    <verbose>true</verbose>
+                </configuration>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
                         </goals>
                     </execution>
                 </executions>

@@ -16,20 +16,17 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.ASSOCIATE_PUBLIC_IP_ADDRESSES;
-import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.IAM_ENDPOINT;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.IMPORT_KEY_PAIR_IF_MISSING;
-import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.KMS_REGION_ENDPOINT;
-import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION;
-import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION_ENDPOINT;
+import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.KEY_NAME_PREFIX;
 import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_JCE_PRIVATE_KEY;
 import static com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_JCE_PUBLIC_KEY;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.collect.Iterables.getOnlyElement;
+import static java.util.Objects.requireNonNull;
 
 import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
-import com.amazonaws.regions.RegionUtils;
+import com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.AmazonEC2Exception;
 import com.amazonaws.services.ec2.model.BlockDeviceMapping;
@@ -44,7 +41,6 @@ import com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
 import com.amazonaws.services.ec2.model.DescribeInstancesRequest;
 import com.amazonaws.services.ec2.model.DescribeInstancesResult;
 import com.amazonaws.services.ec2.model.DescribeKeyPairsResult;
-import com.amazonaws.services.ec2.model.DescribeRegionsResult;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsRequest;
 import com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsResult;
 import com.amazonaws.services.ec2.model.DescribeVolumesRequest;
@@ -64,22 +60,21 @@ import com.amazonaws.services.ec2.model.InstanceStatus;
 import com.amazonaws.services.ec2.model.KeyPairInfo;
 import com.amazonaws.services.ec2.model.LaunchSpecification;
 import com.amazonaws.services.ec2.model.Placement;
-import com.amazonaws.services.ec2.model.Region;
 import com.amazonaws.services.ec2.model.RequestSpotInstancesRequest;
 import com.amazonaws.services.ec2.model.RequestSpotInstancesResult;
 import com.amazonaws.services.ec2.model.Reservation;
+import com.amazonaws.services.ec2.model.ResourceType;
 import com.amazonaws.services.ec2.model.RunInstancesRequest;
 import com.amazonaws.services.ec2.model.RunInstancesResult;
 import com.amazonaws.services.ec2.model.SpotInstanceRequest;
 import com.amazonaws.services.ec2.model.SpotInstanceState;
 import com.amazonaws.services.ec2.model.SpotPlacement;
 import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.ec2.model.TagSpecification;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 import com.amazonaws.services.ec2.model.TerminateInstancesResult;
 import com.amazonaws.services.ec2.model.Volume;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
-import com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
-import com.amazonaws.services.identitymanagement.model.NoSuchEntityException;
 import com.amazonaws.services.kms.AWSKMSClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSFilters;
@@ -87,6 +82,9 @@ import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.Tags.InstanceTags;
 import com.cloudera.director.aws.Tags.ResourceTags;
+import com.cloudera.director.aws.common.AWSKMSClientProvider;
+import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
+import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
 import com.cloudera.director.aws.ec2.ebs.EBSAllocator;
 import com.cloudera.director.aws.ec2.ebs.EBSAllocator.InstanceEbsVolumes;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
@@ -99,10 +97,8 @@ import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.Property;
 import com.cloudera.director.spi.v1.model.Resource;
-import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionDetails;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v1.model.util.CompositeConfigurationValidator;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
@@ -115,10 +111,11 @@ import com.cloudera.director.spi.v1.util.KeySerialization;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Charsets;
 import com.google.common.base.Function;
-import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
+import com.google.common.base.Predicate;
+import com.google.common.base.Predicates;
 import com.google.common.collect.BiMap;
-import com.google.common.collect.FluentIterable;
+import com.google.common.collect.Collections2;
 import com.google.common.collect.HashBiMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -137,13 +134,18 @@ import java.security.PublicKey;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Date;
+import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import javax.annotation.Nullable;
 import javax.xml.bind.DatatypeConverter;
 
 import org.slf4j.Logger;
@@ -158,6 +160,35 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private static final Logger LOG = LoggerFactory.getLogger(EC2Provider.class);
   @VisibleForTesting
   protected static final int MAX_TAGS_ALLOWED = 50 - InstanceTags.values().length - ResourceTags.values().length;
+
+  private static final Set<InstanceStateName> UNALLOCATED_STATES = Collections
+      .unmodifiableSet(EnumSet.of(InstanceStateName.Terminated, InstanceStateName.ShuttingDown));
+
+  private static final Predicate<Instance> INSTANCE_IS_TERMINAL =
+      new Predicate<Instance>() {
+        @Override
+        public boolean apply(@Nullable Instance instance) {
+          return instance != null &&
+              UNALLOCATED_STATES.contains(InstanceStateName.fromValue(instance.getState().getName()));
+        }
+      };
+
+  private static final Predicate<EC2Instance> EC2INSTANCE_IS_TERMINAL =
+      new Predicate<EC2Instance>() {
+        @Override
+        public boolean apply(@Nullable EC2Instance instance) {
+          return instance != null && INSTANCE_IS_TERMINAL.apply(instance.unwrap());
+        }
+      };
+
+  private static final Function<EC2Instance, String> EXTRACT_VIRTUAL_INSTANCE_ID_FROM_EC2INSTANCE =
+      new Function<EC2Instance, String>() {
+    @Nullable
+    @Override
+    public String apply(@Nullable EC2Instance instance) {
+      return instance == null ? null : instance.getId();
+    }
+  };
 
   /**
    * The provider configuration properties.
@@ -182,6 +213,32 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private static final String COUNT_BELOW_THRESHOLD = "Allocated %d instances when the minimum count is %d.";
 
   /**
+   * Insufficient instance capacity failure string.
+   */
+  private static final String INSUFFICIENT_INSTANCE_CAPACITY = "InsufficientInstanceCapacity";
+
+  /**
+   * Instance limit exceeded failure string.
+   */
+  private static final String INSTANCE_LIMIT_EXCEEDED = "InstanceLimitExceeded";
+
+  /**
+   * Request limit exceeded failure string.
+   */
+  private static final String REQUEST_LIMIT_EXCEEDED = "RequestLimitExceeded";
+
+  /**
+   * Max spot instance count exceeded failure string.
+   */
+  private static final String MAX_SPOT_INSTANCE_COUNT_EXCEEDED = "MaxSpotInstanceCountExceeded";
+
+  /**
+   * Instance ID not found failure string. This may indicate an eventual consistency issue.
+   */
+  @VisibleForTesting
+  static final String INVALID_INSTANCE_ID_NOT_FOUND = "InvalidInstanceID.NotFound";
+
+  /**
    * The resource provider ID.
    */
   public static final String ID = EC2Provider.class.getCanonicalName();
@@ -202,7 +259,12 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   /**
    * The default spot instance request duration, in milliseconds.
    */
-  public static final int DEFAULT_SPOT_INSTANCE_REQUEST_DURATION_MS = 10 * 60 * 1000; //10 min
+  public static final long DEFAULT_SPOT_INSTANCE_REQUEST_DURATION_MS = 10 * 60 * 1000; //10 min
+
+  /**
+   * The key for spot instance timeouts.
+   */
+  public static final String SPOT_INSTANCE_REQUEST_DURATION_MS = "ec2.spot.requestDurationMilliseconds";
 
   /**
    * The default amount of time to wait, in milliseconds, for a Spot price change when the Spot
@@ -220,7 +282,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     /**
      * Whether to associate a public IP address with instances. Default is <code>true</code>.
      *
-     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-ip-addressing.html">IP Addressing in your VPC</a>
+     * @see <a href="http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/vpc-ip-addressing.html">IP Addressing in
+     * your VPC</a>
      */
     ASSOCIATE_PUBLIC_IP_ADDRESSES(new SimpleConfigurationPropertyBuilder()
         .configKey("associatePublicIpAddresses")
@@ -234,6 +297,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             "public IP addresses to instances and not use NAT instances (public subnet setup).")
         .build()),
 
+    /**
+     * A custom IAM endpoint URL. When not specified, the global IAM endpoint is used.
+     *
+     * @see <a href="http://docs.aws.amazon.com/general/latest/gr/rande.html#iam_region">IAM endpoints</a>
+     */
     IAM_ENDPOINT(new SimpleConfigurationPropertyBuilder()
         .configKey("iamEndpoint")
         .name("IAM endpoint")
@@ -246,8 +314,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     /**
      * Whether to import key pair to AWS if it's missing. Default is <code>false</code>.
      *
-     * @see <a href="http://docs.aws.amazon.com/cli/latest/reference/ec2/import-key-pair.html"> Importing key pair
-     * to your AWS account.</a>
+     * @see <a href="http://docs.aws.amazon.com/cli/latest/reference/ec2/import-key-pair.html">Importing key pair
+     * to your AWS account</a>
      */
     IMPORT_KEY_PAIR_IF_MISSING(new SimpleConfigurationPropertyBuilder()
         .configKey("importKeyPairIfMissing")
@@ -262,10 +330,24 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         .build()),
 
     /**
+     * Prefix for key names used when importing missing key pairs. Default is "CLOUDERA-".
+     *
+     * @see <a href="http://docs.aws.amazon.com/cli/latest/reference/ec2/import-key-pair.html">Importing key pair
+     * to your AWS account</a>
+     */
+    KEY_NAME_PREFIX(new SimpleConfigurationPropertyBuilder()
+        .configKey("keyNamePrefix")
+        .name("Prefix for key names used in import")
+        .defaultValue("CLOUDERA-")
+        .defaultDescription("<p>Prefix used for generated key names used when importing missing key pairs.</p>")
+        .build()),
+
+    /**
      * EC2 region. Each region is a separate geographic area. Each region has multiple, isolated
      * locations known as Availability Zones. Default is us-east-1.
      *
-     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html">Regions and Availability Zones</a>
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/using-regions-availability-zones.html">Regions
+     * and Availability Zones</a>
      */
     REGION(new SimpleConfigurationPropertyBuilder()
         .configKey("region")
@@ -298,7 +380,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     REGION_ENDPOINT(new SimpleConfigurationPropertyBuilder()
         .configKey("regionEndpoint")
         .name("EC2 region endpoint")
-        .defaultDescription("<p>EC2 region endpoint is an optional URL that Cloudera Director can use to communicate with the AWS EC2 service.  AWS provides multiple regional endpoints for EC2 as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#ec2_region\">AWS documentation.</a>")
+        .defaultDescription("<p>EC2 region endpoint is an optional URL that Cloudera Director can use to " +
+                            "communicate with the AWS EC2 service.  AWS provides multiple regional endpoints for " +
+                            "EC2 as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" " +
+                            "href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#ec2_region\">AWS " +
+                            "documentation.</a>")
         .build()),
 
     /**
@@ -309,7 +395,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     KMS_REGION_ENDPOINT(new SimpleConfigurationPropertyBuilder()
         .configKey("kmsRegionEndpoint")
         .name("KMS region endpoint")
-        .defaultDescription("<p>KMS region endpoint is an optional URL that Cloudera Director can use to communicate with the AWS KMS service. AWS provides multiple regional endpoints for KMS as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#kms_region\">AWS documentation.</a>")
+        .defaultDescription("<p>KMS region endpoint is an optional URL that Cloudera Director can use to " +
+                            "communicate with the AWS KMS service. AWS provides multiple regional endpoints for KMS " +
+                            "as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" " +
+                            "href=\"http://docs.aws.amazon.com/general/latest/gr/rande.html#kms_region\">AWS " +
+                            "documentation.</a>")
         .build());
 
     /**
@@ -356,202 +446,21 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     }
   }
 
-  /**
-   * Configures the specified EC2 client.
-   *
-   * @param configuration               the provider configuration
-   * @param accumulator                 the exception accumulator
-   * @param client                      the EC2 client
-   * @param providerLocalizationContext the resource provider localization context
-   * @param verify                      whether to verify the configuration by making an API call
-   * @return the configured client
-   * @throws InvalidCredentialsException    if the supplied credentials are invalid
-   * @throws TransientProviderException     if a transient exception occurs communicating with the
-   *                                        provider
-   * @throws UnrecoverableProviderException if an unrecoverable exception occurs communicating with
-   *                                        the provider
-   */
-  protected static AmazonEC2Client configureClient(Configured configuration,
-      PluginExceptionConditionAccumulator accumulator, AmazonEC2Client client,
-      LocalizationContext providerLocalizationContext, boolean verify) {
-    checkNotNull(client, "client is null");
-
-    try {
-      String regionEndpoint =
-          configuration.getConfigurationValue(REGION_ENDPOINT, providerLocalizationContext);
-      if (regionEndpoint != null) {
-        LOG.info("<< Using configured region endpoint for EC2 client: {}", regionEndpoint);
-      } else {
-        String region = configuration.getConfigurationValue(REGION, providerLocalizationContext);
-        regionEndpoint = getEndpointForRegion(client, region);
-      }
-      client.setEndpoint(regionEndpoint);
-
-      if (verify) {
-        // Attempt to use client, to validate credentials and connectivity
-        client.describeRegions();
-      }
-
-    } catch (AmazonClientException e) {
-      throw AWSExceptions.propagate(e);
-    } catch (IllegalArgumentException e) {
-      accumulator.addError(REGION.unwrap().getConfigKey(), e.getMessage());
-    }
-    return client;
-  }
-
-  /**
-   * Configures the specified IAM client.
-   *
-   * @param configuration               the provider configuration
-   * @param accumulator                 the exception accumulator
-   * @param identityManagementClient    the IAM client
-   * @param providerLocalizationContext the resource provider localization context
-   * @param verify                      whether to verify the configuration by making an API call
-   * @return the configured client
-   * @throws InvalidCredentialsException    if the supplied credentials are invalid
-   * @throws TransientProviderException     if a transient exception occurs communicating with the
-   *                                        provider
-   * @throws UnrecoverableProviderException if an unrecoverable exception occurs communicating with
-   *                                        the provider
-   */
-  @SuppressWarnings("PMD.EmptyCatchBlock")
-  protected static AmazonIdentityManagementClient configureIAMClient(Configured configuration,
-      PluginExceptionConditionAccumulator accumulator,
-      AmazonIdentityManagementClient identityManagementClient,
-      LocalizationContext providerLocalizationContext, boolean verify) {
-    checkNotNull(identityManagementClient, "identityManagementClient is null");
-
-    try {
-      String iamEndpoint =
-          configuration.getConfigurationValue(IAM_ENDPOINT, providerLocalizationContext);
-      if (iamEndpoint != null) {
-        LOG.info("<< Using configured IAM endpoint: {}", iamEndpoint);
-        identityManagementClient.setEndpoint(iamEndpoint);
-      }
-      // else use the single default endpoint for all of AWS (outside GovCloud)
-
-      if (verify) {
-        // Attempt to use client, to validate credentials and connectivity
-        try {
-          identityManagementClient.getInstanceProfile(
-              new GetInstanceProfileRequest().withInstanceProfileName("test"));
-        } catch (NoSuchEntityException e) {
-          /* call succeeded */
-        }
-      }
-
-    } catch (AmazonClientException e) {
-      throw AWSExceptions.propagate(e);
-    } catch (IllegalArgumentException e) {
-      accumulator.addError(IAM_ENDPOINT.unwrap().getConfigKey(), e.getMessage());
-    }
-    return identityManagementClient;
-  }
-
-  /**
-   * Configures the specified KMS client.
-   *
-   * @param configuration               the provider configuration
-   * @param accumulator                 the exception accumulator
-   * @param kmsClient                   the KMS client
-   * @param providerLocalizationContext the resource provider localization context
-   * @return the configured client
-   * @throws InvalidCredentialsException    if the supplied credentials are invalid
-   * @throws TransientProviderException     if a transient exception occurs communicating with the
-   *                                        provider
-   * @throws UnrecoverableProviderException if an unrecoverable exception occurs communicating with
-   *                                        the provider
-   */
-  protected static AWSKMSClient configureKmsClient(Configured configuration,
-      PluginExceptionConditionAccumulator accumulator, AWSKMSClient kmsClient,
-      LocalizationContext providerLocalizationContext) {
-    checkNotNull(kmsClient, "kmsClient is null");
-
-    try {
-      String regionEndpoint = configuration.getConfigurationValue(KMS_REGION_ENDPOINT, providerLocalizationContext);
-      if (regionEndpoint != null) {
-        LOG.info("<< Using configured region endpoint for KMS client: {}", regionEndpoint);
-      } else {
-        String region = configuration.getConfigurationValue(REGION, providerLocalizationContext);
-        regionEndpoint = getKMSEndpointForRegion(kmsClient, region);
-      }
-      kmsClient.setEndpoint(regionEndpoint);
-    } catch (AmazonClientException e) {
-      throw AWSExceptions.propagate(e);
-    } catch (IllegalArgumentException e) {
-      accumulator.addError(REGION.unwrap().getConfigKey(), e.getMessage());
-    }
-    return kmsClient;
-  }
-
-  /**
-   * Returns the KMS endpoint URL for the specified region.
-   *
-   * @param kmsClient  the KMS client
-   * @param regionName the desired region
-   * @return the endpoint URL for the specified region
-   * @throws IllegalArgumentException if the endpoint cannot be determined
-   */
-  private static String getKMSEndpointForRegion(AWSKMSClient kmsClient, String regionName) {
-    checkNotNull(kmsClient, "kmsClient is null");
-    checkNotNull(regionName, "regionName is null");
-
-    com.amazonaws.regions.Region region = RegionUtils.getRegion(regionName);
-
-    if (region == null) {
-      throw new IllegalArgumentException(String.format("Unable to find the region %s", regionName));
-    }
-
-    String serviceName = kmsClient.getServiceName();
-    String protocolPrefix = region.hasHttpsEndpoint(serviceName) ? "https://" : "http://";
-    return protocolPrefix + region.getServiceEndpoint(serviceName);
-  }
-
-  /**
-   * Returns the endpoint URL for the specified region.
-   *
-   * @param client     the EC2 client
-   * @param regionName the desired region
-   * @return the endpoint URL for the specified region
-   * @throws IllegalArgumentException if the endpoint cannot be determined
-   */
-  private static String getEndpointForRegion(AmazonEC2Client client, String regionName) {
-    checkNotNull(client, "client is null");
-    checkNotNull(regionName, "regionName is null");
-
-    LOG.info(">> Describing all regions to find endpoint for '{}'", regionName);
-
-    DescribeRegionsResult result = client.describeRegions();
-    List<String> regions = Lists.newArrayListWithExpectedSize(result.getRegions().size());
-
-    for (Region candidate : result.getRegions()) {
-      regions.add(candidate.getRegionName());
-
-      if (candidate.getRegionName().equals(regionName)) {
-        LOG.info("<< Found endpoint '{}' for region '{}'", candidate.getEndpoint(), regionName);
-
-        return candidate.getEndpoint();
-      }
-    }
-
-    throw new IllegalArgumentException(String.format("Unable to find an endpoint for region '%s'. "
-        + "Choose one of the following regions: %s", regionName, Joiner.on(", ").join(regions)));
-  }
-
-  private static final String PUBLIC_KEY_PREFIX = "CLOUDERA-";
-  private final AmazonEC2Client client;
+  private final AmazonEC2AsyncClient client;
   private final AmazonIdentityManagementClient identityManagementClient;
   private final AWSKMSClient kmsClient;
 
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
   private final VirtualizationMappings virtualizationMappings;
   private final AWSFilters ec2Filters;
-  private final EC2TagHelper ec2TagHelper;
+  @VisibleForTesting
+  final EC2TagHelper ec2TagHelper;
   private final NetworkRules networkRules;
 
   private final boolean associatePublicIpAddresses;
   private final boolean importKeyPairIfMissing;
+  private final String keyNamePrefix;
+  private final long spotRequestDuration;
 
   private final ConfigurationValidator resourceTemplateConfigurationValidator;
 
@@ -568,38 +477,46 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * @param awsTimeouts              the AWS timeouts
    * @param customTagMappings        the custom tag mappings
    * @param networkRules             the network rules
-   * @param client                   the EC2 client
-   * @param identityManagementClient the IAM client
-   * @param kmsClient                the KMS client
-   * @param cloudLocalizationContext the parent cloud localization context
-   * @throws InvalidCredentialsException    if the supplied credentials are invalid
-   * @throws TransientProviderException     if a transient exception occurs communicating with the
-   *                                        provider
-   * @throws UnrecoverableProviderException if an unrecoverable exception occurs communicating with
-   *                                        the provider
+   * @param clientProvider                   the EC2 client provider
+   * @param identityManagementClientProvider the IAM client provider
+   * @param kmsClientProvider                the KMS client provider
+   * @param cloudLocalizationContext         the parent cloud localization context
+   * @throws UnrecoverableProviderException  if an unrecoverable exception occurs communicating with
+   *                                         the provider
    */
-  public EC2Provider(Configured configuration,
-      EphemeralDeviceMappings ephemeralDeviceMappings, EBSMetadata ebsMetadata,
-      VirtualizationMappings virtualizationMappings, AWSFilters awsFilters,
-      AWSTimeouts awsTimeouts, CustomTagMappings customTagMappings,
-      NetworkRules networkRules, AmazonEC2Client client,
-      AmazonIdentityManagementClient identityManagementClient, AWSKMSClient kmsClient,
+  public EC2Provider(
+      Configured configuration,
+      EphemeralDeviceMappings ephemeralDeviceMappings,
+      EBSMetadata ebsMetadata,
+      VirtualizationMappings virtualizationMappings,
+      AWSFilters awsFilters,
+      AWSTimeouts awsTimeouts,
+      CustomTagMappings customTagMappings,
+      NetworkRules networkRules,
+      AmazonEC2ClientProvider clientProvider,
+      AmazonIdentityManagementClientProvider identityManagementClientProvider,
+      AWSKMSClientProvider kmsClientProvider,
       LocalizationContext cloudLocalizationContext) {
+
     super(configuration, METADATA, cloudLocalizationContext);
     LocalizationContext localizationContext = getLocalizationContext();
     this.ephemeralDeviceMappings =
-        checkNotNull(ephemeralDeviceMappings, "ephemeralDeviceMappings is null");
+        requireNonNull(ephemeralDeviceMappings, "ephemeralDeviceMappings is null");
     this.virtualizationMappings =
-        checkNotNull(virtualizationMappings, "virtualizationMappings is null");
-    this.ec2Filters = checkNotNull(awsFilters, "awsFilters").getSubfilters(ID);
+        requireNonNull(virtualizationMappings, "virtualizationMappings is null");
+    this.ec2Filters = requireNonNull(awsFilters, "awsFilters").getSubfilters(ID);
     this.ec2TagHelper = new EC2TagHelper(customTagMappings);
-    this.networkRules = checkNotNull(networkRules, "networkRules is null");
+    this.networkRules = requireNonNull(networkRules, "networkRules is null");
 
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
-    this.client = configureClient(configuration, accumulator, client, localizationContext, false);
-    this.identityManagementClient = configureIAMClient(configuration, accumulator,
-        identityManagementClient, localizationContext, false);
-    this.kmsClient = configureKmsClient(configuration, accumulator, kmsClient, localizationContext);
+
+    this.client = requireNonNull(clientProvider, "clientProvider is null")
+        .getClient(configuration, accumulator, localizationContext, false);
+    this.identityManagementClient = requireNonNull(
+        identityManagementClientProvider, "identityManagementClientProvider is null")
+        .getClient(configuration, accumulator, localizationContext, false);
+    this.kmsClient = requireNonNull(kmsClientProvider, "kmsClientProvider is null")
+        .getClient(configuration, accumulator, localizationContext, false);
 
     if (accumulator.hasError()) {
       PluginExceptionDetails pluginExceptionDetails =
@@ -613,6 +530,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     this.importKeyPairIfMissing = Boolean.parseBoolean(
         getConfigurationValue(IMPORT_KEY_PAIR_IF_MISSING, localizationContext));
+    this.keyNamePrefix = getConfigurationValue(KEY_NAME_PREFIX, localizationContext);
+
+    this.spotRequestDuration =
+        awsTimeouts.getTimeout(SPOT_INSTANCE_REQUEST_DURATION_MS).or(DEFAULT_SPOT_INSTANCE_REQUEST_DURATION_MS);
 
     this.resourceTemplateConfigurationValidator =
         new CompositeConfigurationValidator(
@@ -742,24 +663,38 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    */
   private void allocateEbsVolumes(EC2InstanceTemplate template, Collection<String> virtualInstanceIds, int minCount)
       throws InterruptedException {
+
+    boolean success = false;
+
     BiMap<String, String> instanceIdPairs = getEC2InstanceIdsByVirtualInstanceId(virtualInstanceIds);
-
     List<InstanceEbsVolumes> instanceVolumes = ebsAllocator.createVolumes(template, instanceIdPairs);
-    instanceVolumes = ebsAllocator.waitUntilVolumesAvailable(instanceVolumes);
-    instanceVolumes = ebsAllocator.attachAndTagVolumes(template, instanceVolumes);
-    ebsAllocator.addDeleteOnTerminationFlag(instanceVolumes);
 
-    int successfulInstances = getSuccessfulInstanceCount(instanceVolumes);
-    LOG.info("{} out of {} instances successfully acquired EBS volumes",
-        successfulInstances, virtualInstanceIds.size());
+    try {
+      instanceVolumes = ebsAllocator.waitUntilVolumesAvailable(instanceVolumes);
+      instanceVolumes = ebsAllocator.attachVolumes(template, instanceVolumes);
+      ebsAllocator.addDeleteOnTerminationFlag(instanceVolumes);
 
-    if (successfulInstances < minCount) {
-      LOG.warn("A minimum number of {} instances could not acquire EBS volumes, cleaning up by " +
-          "deleting all allocated instances and volumes", minCount);
-      deleteAllInstancesAndVolumes(instanceVolumes, template, ebsAllocator);
-      return;
+      int successfulInstances = getSuccessfulInstanceCount(instanceVolumes);
+      LOG.info("{} out of {} instances successfully acquired EBS volumes",
+          successfulInstances, virtualInstanceIds.size());
+
+      if (successfulInstances < minCount) {
+        LOG.warn("A minimum number of {} instances could not acquire EBS volumes, cleaning up by " +
+            "deleting all allocated instances and volumes", minCount);
+      } else {
+        success = true;
+      }
+    } catch (InterruptedException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new UnrecoverableProviderException("Unexpected problem allocating EBS volumes", e);
+    } finally {
+      if (!success) {
+        deleteAllInstancesAndVolumes(instanceVolumes, template, ebsAllocator);
+      } else {
+        deleteFailedInstancesAndVolumes(instanceVolumes, template, ebsAllocator);
+      }
     }
-    deleteFailedInstancesAndVolumes(instanceVolumes, template, ebsAllocator);
   }
 
   /**
@@ -896,6 +831,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     }
   }
 
+  /**
+   * Retrieves an instance attribute.
+   *
+   * @param  instanceId instance ID
+   * @param  attribute  name of attribute to describe
+   * @return            attribute
+   */
   @VisibleForTesting
   InstanceAttribute describeInstanceAttribute(String instanceId, InstanceAttributeName attribute) {
     DescribeInstanceAttributeRequest request = new DescribeInstanceAttributeRequest()
@@ -1012,7 +954,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     String keyName = lookupKeyName(privateKeyFingerprint, publicKeyFingerprint);
     if (keyName == null) {
       if (importKeyPairIfMissing) {
-        keyName = PUBLIC_KEY_PREFIX + publicKeyFingerprint;
+        keyName = keyNamePrefix + publicKeyFingerprint;
         LOG.info("KeyPair not found. Adding public key to EC2 with key name : {}", keyName);
         try {
           client.importKeyPair(new ImportKeyPairRequest().withKeyName(keyName).withPublicKeyMaterial(
@@ -1049,7 +991,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * @throws IllegalStateException if the SHA-1 digest algorithm is not
    *                               available
    */
-  private static String getSha1Fingerprint(PrivateKey privateKey) {
+  @VisibleForTesting
+  static String getSha1Fingerprint(PrivateKey privateKey) {
     MessageDigest digest;
     try {
       digest = MessageDigest.getInstance("SHA-1");
@@ -1068,7 +1011,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * @return public key fingerprint, as a lowercase hex string without colons,
    * or null if publicKey is null
    */
-  private static String getMd5Fingerprint(PublicKey publicKey) {
+  @VisibleForTesting
+  static String getMd5Fingerprint(PublicKey publicKey) {
     if (publicKey == null) {
       return null;
     }
@@ -1127,93 +1071,159 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     LOG.info(">> Requesting {} instances for {}", instanceCount, template);
 
-    // EC2 client doesn't accept a min count of 0. Readjust the requested
-    // value to 1 to allow submitting the request.
-    int normalizedMinCount = (minCount == 0) ? 1 : minCount;
+    boolean success = false;
 
-    RunInstancesResult runInstancesResult;
     try {
-      runInstancesResult = client.runInstances(
-          newRunInstancesRequest(template, virtualInstanceIds, normalizedMinCount));
-    } catch (AmazonServiceException e) {
-      AWSExceptions.propagateIfUnrecoverable(e);
+      // Try to find all instances that are not in a terminal state
+      Collection<EC2Instance> existingInstance = Collections2.filter(find(template, virtualInstanceIds),
+          Predicates.not(EC2INSTANCE_IS_TERMINAL));
+      Collection<String> existingInstanceVirtualInstanceIds = Collections2.transform(existingInstance,
+          EXTRACT_VIRTUAL_INSTANCE_ID_FROM_EC2INSTANCE);
 
-      // As documented at http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-capacity.html
+      if (!existingInstanceVirtualInstanceIds.isEmpty()) {
+        LOG.info("Instances with the following virtual instance IDs were already found allocated: {}",
+            existingInstanceVirtualInstanceIds);
+      }
 
-      if ("InsufficientInstanceCapacity".equals(e.getErrorCode()) ||
-          "InstanceLimitExceeded".equals(e.getErrorCode())) {
-        if (minCount == 0) {
-          LOG.warn("Ignoring insufficient capacity exception due to min count being zero", e);
-          return Collections.emptyList();
-        } else {
-          // fail fast on insufficient instance capacity because we expect it will take
-          // a fair amount of time for AWS to bring more capacity online in a zone or it will
-          // take some time for customers to request a limit increase
-          throw new UnrecoverableProviderException(e.getErrorMessage(), e);
+      List<Tag> userDefinedTags = ec2TagHelper.getUserDefinedTags(template);
+      List<RunInstancesResult> runInstancesResults = Lists.newArrayList();
+
+      // Remove any already allocated instances
+      Set<String> unallocatedInstanceIds = Sets.newHashSet(virtualInstanceIds);
+      unallocatedInstanceIds.removeAll(existingInstanceVirtualInstanceIds);
+
+      Map<String, Future<RunInstancesResult>> runInstanceRequests = Maps.newHashMap();
+      LOG.info(">> Building {} instance requests", unallocatedInstanceIds.size());
+
+      boolean rateLimitIssues = false;
+      boolean capacityIssues = false;
+      for (String virtualInstanceId : unallocatedInstanceIds) {
+        runInstanceRequests.put(virtualInstanceId, client.runInstancesAsync(
+            newRunInstancesRequest(template, virtualInstanceId, userDefinedTags)));
+      }
+
+      LOG.info(">> Submitted {} run instance requests.", runInstanceRequests.size());
+
+      try {
+        for (Map.Entry<String, Future<RunInstancesResult>> runInstanceRequest : runInstanceRequests.entrySet()) {
+          try {
+            runInstancesResults.add(runInstanceRequest.getValue().get());
+          } catch (ExecutionException e) {
+            if (e.getCause() instanceof AmazonServiceException) {
+              AmazonServiceException awsException = (AmazonServiceException) e.getCause();
+
+              AWSExceptions.propagateIfUnrecoverable(awsException);
+
+              if (INSUFFICIENT_INSTANCE_CAPACITY.equals(awsException.getErrorCode()) ||
+                  INSTANCE_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
+                capacityIssues = true;
+              } else if (REQUEST_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
+                rateLimitIssues = true;
+              } else {
+                LOG.error("Exception while trying to allocate instance.", e);
+              }
+            } else {
+              LOG.error("Error while requesting instance {}. Attempting to proceed.", runInstanceRequest.getKey());
+              LOG.debug("Exception caught:", e);
+            }
+          }
         }
-      } else {
-        throw AWSExceptions.propagate(e);
+      } catch (AmazonServiceException e) {
+        for (Future<RunInstancesResult> runInstanceRequest : runInstanceRequests.values()) {
+          if (!runInstanceRequest.isDone()) {
+            runInstanceRequest.cancel(true);
+          }
+        }
+
+        throw e;
+      }
+
+      if (capacityIssues) {
+        LOG.warn("Some instances were not allocated due to instance limits or capacity issues. " +
+            "Checking if we have enough instances to continue.");
+      }
+
+      if (rateLimitIssues) {
+        LOG.warn("Encountered rate limit errors while allocating instances. " +
+            "Checking if we have enough instances to continue.");
+      }
+
+      if (LOG.isInfoEnabled()) {
+        for (RunInstancesResult runInstancesResult : runInstancesResults) {
+          LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
+              summarizeReservationForLogging(runInstancesResult.getReservation()));
+        }
+      }
+
+      // Determine which do not yet have a private IP address.
+
+      Set<String> instancesWithNoPrivateIp = Sets.newHashSet();
+
+      List<Instance> instances = Lists.newArrayList();
+
+      for (RunInstancesResult runInstancesResult : runInstancesResults) {
+        instances.addAll(runInstancesResult.getReservation().getInstances());
+      }
+
+      // Add in the already existing instances we found before
+      for (EC2Instance ec2Instance : existingInstance) {
+        instances.add(ec2Instance.unwrap());
+      }
+
+      if (instances.size() < minCount) {
+        throw new UnrecoverableProviderException(String.format(COUNT_BELOW_THRESHOLD, instances.size(), minCount));
+      }
+
+      List<String> successfulVirtualInstanceIds = Lists.newArrayList();
+
+      for (Instance instance : instances) {
+
+        String virtualInstanceId = getVirtualInstanceId(instance.getTags(), "instance");
+        String ec2InstanceId = instance.getInstanceId();
+
+        if (waitUntilInstanceHasStarted(ec2InstanceId)) {
+          successfulVirtualInstanceIds.add(virtualInstanceId);
+
+          if (instance.getPrivateIpAddress() == null) {
+            instancesWithNoPrivateIp.add(ec2InstanceId);
+          } else {
+            LOG.info("<< Instance {} got IP {}", ec2InstanceId, instance.getPrivateIpAddress());
+          }
+        } else {
+          LOG.info("<< Instance {} did not start.", ec2InstanceId);
+        }
+      }
+
+      // Wait until all of them have a private IP (it should be pretty fast)
+      Collection<String> terminatedInstanceIds = waitForPrivateIpAddresses(instancesWithNoPrivateIp);
+
+      // Remove any failed instances from the list of successful instance IDs
+      successfulVirtualInstanceIds.removeAll(terminatedInstanceIds);
+
+      int numInstancesAlive = successfulVirtualInstanceIds.size();
+      if (numInstancesAlive < minCount) {
+        LOG.error("Number of instances allocated ({}) is less than the minimum count ({}). " +
+            "One or more instances may have unexpectedly terminated.", numInstancesAlive, minCount);
+        throw new UnrecoverableProviderException(String.format(COUNT_BELOW_THRESHOLD, numInstancesAlive, minCount));
+      }
+
+      success = true;
+      return successfulVirtualInstanceIds;
+    } catch (InterruptedException e) {
+      throw e;
+    } catch (Exception e) {
+      throw new UnrecoverableProviderException("Unexpected problem during instance allocation", e);
+    } finally {
+      if (!success) {
+        LOG.error("Unsuccessful allocation of on demand instances. Terminating instances.");
+
+        try {
+          delete(template, virtualInstanceIds);
+        } catch (Exception e) {
+          LOG.error("Error while trying to delete instances after failed instance allocation.", e);
+        }
       }
     }
-
-    if (LOG.isInfoEnabled()) {
-      LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
-          summarizeReservationForLogging(runInstancesResult.getReservation()));
-    }
-
-    // Tag all the new instances so that we can easily find them later on.
-    // Determine which do not yet have a private IP address.
-
-    Set<String> instancesWithNoPrivateIp = Sets.newHashSet();
-
-    List<Instance> instances = runInstancesResult.getReservation().getInstances();
-
-    // Limit the number of virtual instance id's used for tagging to the
-    // number of instances that we managed to reserve.
-    List<String> virtualInstanceIdsAllocated = FluentIterable
-        .from(virtualInstanceIds)
-        .limit(instances.size())
-        .toList();
-
-    List<String> successfulVirtualInstanceIds = Lists.newArrayList();
-
-    // Pre-compute user-defined tags for efficiency
-    List<Tag> userDefinedTags = ec2TagHelper.getUserDefinedTags(template);
-
-    for (Map.Entry<String, Instance> entry : zipWith(virtualInstanceIdsAllocated, instances)) {
-
-      String virtualInstanceId = entry.getKey();
-      Instance instance = entry.getValue();
-      String ec2InstanceId = instance.getInstanceId();
-
-      if (tagInstance(template, userDefinedTags, virtualInstanceId, ec2InstanceId)) {
-        successfulVirtualInstanceIds.add(virtualInstanceId);
-
-        if (instance.getPrivateIpAddress() == null) {
-          instancesWithNoPrivateIp.add(ec2InstanceId);
-        } else {
-          LOG.info("<< Instance {} got IP {}", ec2InstanceId, instance.getPrivateIpAddress());
-        }
-      } else {
-        LOG.info("<< Instance {} could not be tagged.", ec2InstanceId);
-      }
-    }
-
-    // Wait until all of them have a private IP (it should be pretty fast)
-    Collection<String> terminatedInstanceIds = waitForPrivateIpAddresses(instancesWithNoPrivateIp);
-
-    // Remove any failed instances from the list of successful instance IDs
-    successfulVirtualInstanceIds.removeAll(terminatedInstanceIds);
-
-    int numInstancesTagged = successfulVirtualInstanceIds.size();
-    if (numInstancesTagged < minCount) {
-      LOG.error("Number of instances tagged ({}) is less than the minimum count ({}). One or more instances may have " +
-          "unexpectedly terminated prior to tagging.", numInstancesTagged, minCount);
-      delete(template, successfulVirtualInstanceIds);
-      throw new UnrecoverableProviderException(String.format(COUNT_BELOW_THRESHOLD, numInstancesTagged, minCount));
-    }
-
-    return successfulVirtualInstanceIds;
   }
 
   /**
@@ -1241,7 +1251,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     // TODO add configurable duration
     long startTime = System.currentTimeMillis();
     Date requestExpirationTime =
-        new Date(startTime + DEFAULT_SPOT_INSTANCE_REQUEST_DURATION_MS);
+        new Date(startTime + spotRequestDuration);
     Date priceChangeDeadline =
         new Date(startTime + DEFAULT_SPOT_INSTANCE_PRICE_CHANGE_DURATION_MS);
 
@@ -1312,45 +1322,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   }
 
   /**
-   * Tags an EC2 instance. Expects that the instance already exists or is in the process of
-   * being created. This may also tag EBS volumes depending on template configurations.
-   *
-   * @param template          the instance template
-   * @param userDefinedTags   the user-defined tags
-   * @param virtualInstanceId the virtual instance id
-   * @param ec2InstanceId     the EC2 instance id
-   * @return true if the instance was successfully tagged, false otherwise
-   * @throws InterruptedException if the operation is interrupted
-   */
-  private boolean tagInstance(EC2InstanceTemplate template, List<Tag> userDefinedTags,
-      String virtualInstanceId, String ec2InstanceId) throws InterruptedException {
-    LOG.info(">> Tagging instance {} / {}", ec2InstanceId, virtualInstanceId);
-
-    // Wait for the instance to be started. If it is terminating, skip tagging.
-    if (!waitUntilInstanceHasStarted(ec2InstanceId)) {
-      return false;
-    }
-
-    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
-    client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
-
-    // Tag EBS volumes if they were part of instance launch request
-    if (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST) {
-      DescribeInstancesResult result = client.describeInstances(
-          new DescribeInstancesRequest().withInstanceIds(Collections.singletonList(ec2InstanceId))
-      );
-      List<InstanceBlockDeviceMapping> instanceBlockDeviceMappings =
-          getOnlyElement(getOnlyElement(result.getReservations()).getInstances()).getBlockDeviceMappings();
-      for (InstanceBlockDeviceMapping instanceBlockDeviceMapping : instanceBlockDeviceMappings) {
-        String volumeId = instanceBlockDeviceMapping.getEbs().getVolumeId();
-        ebsAllocator.tagVolume(template, userDefinedTags, virtualInstanceId, volumeId);
-      }
-    }
-
-    return true;
-  }
-
-  /**
    * Waits until the instance has entered a running state.
    *
    * @param ec2InstanceId the EC2 instance id
@@ -1360,45 +1331,47 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private boolean waitUntilInstanceHasStarted(String ec2InstanceId) throws InterruptedException {
     // TODO: Add a timeout to this loop.
     while (true) {
-      DescribeInstanceStatusResult result = client.describeInstanceStatus(
-          new DescribeInstanceStatusRequest()
-              .withIncludeAllInstances(true)
-              .withInstanceIds(ec2InstanceId)
-      );
+      try {
+        DescribeInstanceStatusResult result = client.describeInstanceStatus(
+            new DescribeInstanceStatusRequest()
+                .withIncludeAllInstances(true)
+                .withInstanceIds(ec2InstanceId)
+        );
+        for (InstanceStatus status : result.getInstanceStatuses()) {
+          InstanceStateName currentState =
+              InstanceStateName.fromValue(status.getInstanceState().getName());
 
-      for (InstanceStatus status : result.getInstanceStatuses()) {
-        InstanceStateName currentState =
-            InstanceStateName.fromValue(status.getInstanceState().getName());
-
-        if (ec2InstanceId.equals(status.getInstanceId())) {
-          if (currentState.equals(InstanceStateName.Terminated) ||
-              currentState.equals(InstanceStateName.ShuttingDown)) {
-            LOG.error("Instance {} has unexpectedly terminated", ec2InstanceId);
-            return false;
-          } else if (!currentState.equals(InstanceStateName.Pending)) {
-            return true;
+          if (ec2InstanceId.equals(status.getInstanceId())) {
+            if (currentState.equals(InstanceStateName.Terminated) ||
+                currentState.equals(InstanceStateName.ShuttingDown)) {
+              LOG.error("Instance {} has unexpectedly terminated", ec2InstanceId);
+              return false;
+            } else if (!currentState.equals(InstanceStateName.Pending)) {
+              return true;
+            }
           }
         }
+      } catch (AmazonServiceException e) {
+        if (!INVALID_INSTANCE_ID_NOT_FOUND.equals(e.getErrorCode())) {
+          AWSExceptions.propagate(e);
+        }
       }
-
       TimeUnit.SECONDS.sleep(5);
     }
   }
 
   /**
-   * Builds a {@code RunInstancesRequest} starting from a template and a set of
-   * virtual IDs.
+   * Builds a {@code RunInstancesRequest} starting from a template and a virtual instance ID.
+   * Instances will be tagged as they're created.
    *
-   * @param template           the instance template
-   * @param virtualInstanceIds the virtual instance IDs
+   * @param template          the instance template
+   * @param virtualInstanceId the virtual instance IDs
+   * @param userDefinedTags   user defined tags to attach to the instance
    */
   @SuppressWarnings("ConstantConditions")
   private RunInstancesRequest newRunInstancesRequest(EC2InstanceTemplate template,
-      Collection<String> virtualInstanceIds, int minCount) {
+      String virtualInstanceId, List<Tag> userDefinedTags) {
 
-    LOG.info(">> Building instance requests");
-
-    int groupSize = virtualInstanceIds.size();
     String image = template.getImage();
     String type = template.getType();
 
@@ -1407,18 +1380,23 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     List<BlockDeviceMapping> deviceMappings = getBlockDeviceMappings(template);
 
-    LOG.info(">> Instance request type: {}, image: {}, group size: {}",
-        type, image, groupSize);
+    LOG.info(">> Instance request type: {}, image: {}", type, image);
+
+    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+    List<TagSpecification> tagSpecifications = Lists.newArrayList(
+        new TagSpecification().withTags(tags).withResourceType(ResourceType.Instance),
+        new TagSpecification().withTags(tags).withResourceType(ResourceType.Volume));
 
     RunInstancesRequest request = new RunInstancesRequest()
         .withImageId(image)
         .withInstanceType(type)
-        .withMaxCount(groupSize)
-        .withMinCount(minCount)
-        .withClientToken(getHashOfVirtualInstanceIdsForClientToken(
-            virtualInstanceIds, Optional.<Long>absent()))
+        .withMaxCount(1)
+        .withMinCount(1)
+        .withClientToken(UUID.randomUUID().toString())
         .withNetworkInterfaces(network)
-        .withBlockDeviceMappings(deviceMappings);
+        .withTagSpecifications(tagSpecifications)
+        .withBlockDeviceMappings(deviceMappings)
+        .withEbsOptimized(template.isEbsOptimized());
 
     if (template.getIamProfileName().isPresent()) {
       request.withIamInstanceProfile(new IamInstanceProfileSpecification()
@@ -1718,18 +1696,15 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     if (template != null) {
       if (!template.getKeyName().equals(Optional.fromNullable(instanceKeyName))) {
-        throw new IllegalStateException("Found unexpected key name: " + instanceKeyName
-            + " for instance: " + instanceIds);
+        LOG.warn("Found unexpected key name: {} for instance: {}", instanceKeyName, instanceIds);
       }
       String instanceType = instance.getInstanceType();
       if (!template.getType().equals(instanceType)) {
-        throw new IllegalStateException("Found unexpected type: " + instanceType
-            + " for instance: " + instanceIds);
+        LOG.warn("Found unexpected type: {} for instance: {}", instanceType, instanceIds);
       }
       String instanceImageId = instance.getImageId();
       if (!template.getImage().equals(instanceImageId)) {
-        throw new IllegalStateException("Found unexpected image type: " + instanceImageId
-            + " for instance: " + instanceIds);
+        LOG.warn("Found unexpected image: {} for instance: {}", instanceImageId, instanceIds);
       }
     }
     return virtualInstanceId;
@@ -1776,31 +1751,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   }
 
   /**
-   * Combines all the virtual instance IDs together in a single token than
-   * can be used to make sure we can safely retry any runInstances() call.
-   *
-   * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/Run_Instance_Idempotency.html">Ensuring Idempotency</a>
-   */
-  private String getHashOfVirtualInstanceIdsForClientToken(Collection<String> virtualInstanceIds,
-      Optional<Long> discriminator) {
-    // Using MD5 because clientToken should be less than 64 characters long
-    Hasher hasher = Hashing.md5().newHasher(virtualInstanceIds.size());
-
-    // We are sorting the input list because we want our hash to be order independent
-    for (String id : Sets.newTreeSet(virtualInstanceIds)) {
-      hasher.putString(id, Charsets.UTF_8);
-    }
-    if (discriminator.isPresent()) {
-      hasher.putLong(discriminator.get());
-    }
-    return hasher.hash().toString();
-  }
-
-  /**
    * Represents a callback that can be applied to each instance of
    * a {@code DescribeInstancesResult}.
    */
-  private interface InstanceHandler {
+  @VisibleForTesting
+  interface InstanceHandler {
 
     /**
      * Handles the specified instance.
@@ -1812,12 +1767,15 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
   /**
    * Iterates through the instances identified by the specified virtual instance IDs
-   * and calls the specified handler on each instance.
+   * and calls the specified handler on each instance. Instances with the same virtual
+   * instance IDs are deduplicated, preferring running instances over terminating or
+   * terminated instances.
    *
    * @param virtualInstanceIds the virtual instance IDs
    * @param instanceHandler    the instance handler
    */
-  private void forEachInstance(Collection<String> virtualInstanceIds,
+  @VisibleForTesting
+  void forEachInstance(Collection<String> virtualInstanceIds,
       EC2Provider.InstanceHandler instanceHandler) {
     List<DescribeInstancesResult> results = Lists.newArrayList();
     String idTagName = ec2TagHelper.getClouderaDirectorIdTagName();
@@ -1828,19 +1786,56 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       results.add(result);
     }
 
+    // collect Instances, preferring running instances over terminated instances and
+    // also ensuring we only process one instance per virtual instance id
+    final Map<String, Instance> virtualInstanceIdToInstance =
+        Maps.newHashMapWithExpectedSize(virtualInstanceIds.size());
     for (DescribeInstancesResult result : results) {
-      forEachInstance(result, instanceHandler);
+      forEachInstance(result, new InstanceHandler() {
+        @Override
+        public void handle(Instance instance) {
+          String virtualInstanceId;
+          try {
+            virtualInstanceId = checkInstanceIsManagedByDirector(instance, null);
+          } catch (IllegalStateException e) {
+            LOG.error("Instance {} is not managed by Director. Skipping", instance.getInstanceId());
+            return;
+          }
+          Instance oldInstance = virtualInstanceIdToInstance.get(virtualInstanceId);
+          if (oldInstance == null || INSTANCE_IS_TERMINAL.apply(oldInstance)) {
+            virtualInstanceIdToInstance.put(virtualInstanceId, instance);
+            if (oldInstance != null) {
+              LOG.warn("Retaining new instance {} in preference to terminal instance {}",
+                  instance, oldInstance);
+            }
+          } else {
+            if (!INSTANCE_IS_TERMINAL.apply(instance)) {
+              LOG.error("Two non-terminal instances with virtual instance id {} exist: {} and {}",
+                  virtualInstanceId, oldInstance, instance);
+            } else {
+              LOG.warn("Retaining current non-terminal instance {} in preference to terminal instance {}",
+                  oldInstance, instance);
+            }
+          }
+        }
+      });
+    }
+
+    for (Instance instance : virtualInstanceIdToInstance.values()) {
+      instanceHandler.handle(instance);
     }
   }
 
   /**
    * Iterates through the instances in the specified {@code DescribeInstancesResult}
-   * and calls the specified handler on each instance.
+   * and calls the specified handler on each instance. This method will retrieve the
+   * follow-on {@code DescribeInstanceResult}s if the result holds a {@code nextToken}.
    *
    * @param result          the {@code DescribeInstancesResult}
    * @param instanceHandler the instance handler
    */
-  private void forEachInstance(DescribeInstancesResult result, InstanceHandler instanceHandler) {
+  @VisibleForTesting
+  void forEachInstance(DescribeInstancesResult result, InstanceHandler instanceHandler) {
     List<Reservation> reservations;
     while (!(reservations = result.getReservations()).isEmpty()) {
       for (Reservation reservation : reservations) {
@@ -1978,6 +1973,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     protected int allocatedInstanceCount = 0;
 
     /**
+     * The plugin exception condition accumulator.
+     */
+    private PluginExceptionConditionAccumulator accumulator;
+
+    /**
      * Creates a Spot group allocator with the specified parameters.
      *
      * @param template              the instance template
@@ -2064,19 +2064,14 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
           if (!virtualInstanceIdsNeedingSpotInstanceRequest.isEmpty()) {
 
-            // Determine a client token for AWS idempotency. It must take into account the virtual
-            // instances being requested, as well as the expiration date of the request, so that we
-            // can later make another request for the same virtual instance ids but a different
-            // expiration time.
-            String clientToken = determineClientToken(virtualInstanceIdsNeedingSpotInstanceRequest);
-
-            // Create a request Spot instances request
-            RequestSpotInstancesRequest requestSpotInstancesRequest =
-                newRequestSpotInstancesRequest(virtualInstanceIdsNeedingSpotInstanceRequest,
-                    clientToken);
-
             // Request Spot instances
-            Set<String> newRequestIds = requestSpotInstances(requestSpotInstancesRequest);
+            Set<String> newRequestIds = requestSpotInstances(virtualInstanceIds, accumulator);
+
+            // If we didn't get a request ID for every virtual instance ID, truncate the virtual instance ID set
+            if (newRequestIds.size() < virtualInstanceIdsNeedingSpotInstanceRequest.size()) {
+              virtualInstanceIdsNeedingSpotInstanceRequest = Sets.newHashSet(
+                  Iterables.limit(virtualInstanceIdsNeedingSpotInstanceRequest, newRequestIds.size()));
+            }
 
             // Tag Spot instance requests with virtual instance IDs
             tagSpotInstanceRequests(newRequestIds, virtualInstanceIdsNeedingSpotInstanceRequest);
@@ -2252,30 +2247,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     }
 
     /**
-     * Determines the idempotency client token for the specified virtual instance IDs.
+     * Builds a {@code RequestSpotInstancesRequest}.
      *
-     * @param virtualInstanceIds the virtual instance IDs
-     * @return the idempotency token
-     */
-    @VisibleForTesting
-    protected String determineClientToken(Set<String> virtualInstanceIds) {
-      return getHashOfVirtualInstanceIdsForClientToken(
-          virtualInstanceIds, Optional.of(requestExpirationTime.getTime()));
-    }
-
-    /**
-     * Builds a {@code RequestSpotInstancesRequest} for the specified virtual instance IDs.
-     *
-     * @param virtualInstanceIds the virtual instance IDs
-     * @param clientToken        the idempotency client token
      * @return the {@code RequestSpotInstancesRequest}
      */
     @VisibleForTesting
-    protected RequestSpotInstancesRequest newRequestSpotInstancesRequest(
-        Collection<String> virtualInstanceIds, String clientToken) {
+    protected RequestSpotInstancesRequest newRequestSpotInstanceRequest(String virtualInstanceId) {
 
-      LOG.info(">> Building Spot instance requests");
-      int groupSize = virtualInstanceIds.size();
       String image = template.getImage();
       String type = template.getType();
 
@@ -2288,7 +2266,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
           .withImageId(image)
           .withInstanceType(type)
           .withNetworkInterfaces(network)
-          .withBlockDeviceMappings(deviceMappings);
+          .withBlockDeviceMappings(deviceMappings)
+          .withEbsOptimized(template.isEbsOptimized());
 
       if (template.getIamProfileName().isPresent()) {
         launchSpecification.withIamInstanceProfile(new IamInstanceProfileSpecification()
@@ -2315,14 +2294,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         launchSpecification.withUserData(userData.get());
       }
 
-      LOG.info(">> Spot instance request type: {}, image: {}, group size: {}",
-          type, image, groupSize);
+      LOG.info(">> Spot instance request type: {}, image: {}", type, image);
 
       RequestSpotInstancesRequest request = new RequestSpotInstancesRequest()
           .withSpotPrice(template.getSpotBidUSDPerHour().get().toString())
           .withLaunchSpecification(launchSpecification)
-          .withInstanceCount(groupSize)
-          .withClientToken(clientToken)
+          .withInstanceCount(1)
+          .withClientToken(determineClientToken(virtualInstanceId, requestExpirationTime.getTime()))
           .withValidUntil(requestExpirationTime);
 
       Optional<Integer> blockDurationMinutes = template.getBlockDurationMinutes();
@@ -2336,26 +2314,81 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     /**
      * Requests Spot instances, and returns the resulting Spot instance request IDs.
      *
-     * @param requestSpotInstancesRequest the {@code RequestSpotInstancesRequest}
+     * @param virtualInstanceIds the virtual instance IDs to request spot instances for
+     * @param accumulator plugin exception condition accumulator
      * @return the resulting Spot instance request IDs
      */
     @VisibleForTesting
-    protected Set<String> requestSpotInstances(
-        RequestSpotInstancesRequest requestSpotInstancesRequest) {
+    protected Set<String> requestSpotInstances(Collection<String> virtualInstanceIds,
+        PluginExceptionConditionAccumulator accumulator) throws InterruptedException {
       LOG.info(">> Requesting Spot instances");
-      // Call the requestSpotInstances API.
-      RequestSpotInstancesResult requestSpotInstancesResult =
-          client.requestSpotInstances(requestSpotInstancesRequest);
-      List<SpotInstanceRequest> requestResponses =
-          requestSpotInstancesResult.getSpotInstanceRequests();
 
-      // Collect the request ids of the reused orphaned requests and the new requests.
       Set<String> newRequestIds = Sets.newHashSet();
-      for (SpotInstanceRequest requestResponse : requestResponses) {
-        String requestId = requestResponse.getSpotInstanceRequestId();
-        LOG.info(">> Created Spot Request {}", requestId);
-        newRequestIds.add(requestId);
+
+      boolean maxSpotIssues = false;
+      boolean capacityIssues = false;
+      boolean rateLimitIssues = false;
+
+      List<Future<RequestSpotInstancesResult>> spotResults = Lists.newArrayList();
+      for (String virtualInstanceId : virtualInstanceIds) {
+        spotResults.add(client.requestSpotInstancesAsync(newRequestSpotInstanceRequest(virtualInstanceId)));
       }
+
+      int lostInstances = 0;
+      for (Future<RequestSpotInstancesResult> spotResult : spotResults) {
+        try {
+          RequestSpotInstancesResult requestSpotInstancesResult = spotResult.get();
+          SpotInstanceRequest requestResponse = getOnlyElement(requestSpotInstancesResult.getSpotInstanceRequests());
+          String requestId = requestResponse.getSpotInstanceRequestId();
+          LOG.info(">> Created Spot Request {}", requestId);
+          newRequestIds.add(requestId);
+        } catch (ExecutionException e) {
+          lostInstances++;
+          if (e.getCause() instanceof AmazonServiceException) {
+            AmazonServiceException awsException = (AmazonServiceException) e.getCause();
+            AWSExceptions.propagateIfUnrecoverable(awsException);
+
+            if (MAX_SPOT_INSTANCE_COUNT_EXCEEDED.equals(awsException.getErrorCode())) {
+              maxSpotIssues = true;
+            }
+
+            if (INSUFFICIENT_INSTANCE_CAPACITY.equals(awsException.getErrorCode()) ||
+                INSTANCE_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
+              capacityIssues = true;
+            }
+
+            if (REQUEST_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
+              rateLimitIssues = true;
+            }
+          } else {
+            LOG.error("Error while requesting spot instance. Attempting to proceed.");
+            LOG.debug("Exception caught:", e);
+          }
+        }
+      }
+
+      if (maxSpotIssues) {
+        String message = "Some spot instances were not allocated due to reaching the max spot instance request limit.";
+        accumulator.addWarning(null, message);
+        LOG.warn(message);
+      }
+
+      if (capacityIssues) {
+        String message = "Some instances were not allocated due to instance limits or capacity issues.";
+        accumulator.addWarning(null, message);
+        LOG.warn(message);
+      }
+
+      if (rateLimitIssues) {
+        String message = "Encountered rate limit errors while allocating instances.";
+        accumulator.addWarning(null, message);
+        LOG.warn(message);
+      }
+
+      if (lostInstances > 0) {
+        LOG.warn("Lost {} spot requests.", lostInstances);
+      }
+
       return newRequestIds;
     }
 
@@ -2391,7 +2424,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
      */
     @VisibleForTesting
     @SuppressWarnings("PMD.UselessParentheses")
-    protected void tagSpotInstanceRequest(List<Tag> userDefinedTags, String spotInstanceRequestId, String virtualInstanceId)
+    protected void tagSpotInstanceRequest(List<Tag> userDefinedTags, String spotInstanceRequestId,
+                                          String virtualInstanceId)
         throws InterruptedException {
       LOG.info(">> Tagging Spot instance request {} / {}", spotInstanceRequestId, virtualInstanceId);
       List<Tag> tags = Lists.newArrayList(
@@ -2581,11 +2615,66 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       for (SpotAllocationRecord spotAllocationRecord :
           spotAllocationRecordsByVirtualInstanceId.values()) {
         if ((spotAllocationRecord.ec2InstanceId != null) && !spotAllocationRecord.instanceTagged &&
-            tagInstance(template, userDefinedTags, spotAllocationRecord.virtualInstanceId,
+            tagSpotInstance(template, userDefinedTags, spotAllocationRecord.virtualInstanceId,
                 spotAllocationRecord.ec2InstanceId)) {
           spotAllocationRecord.instanceTagged = true;
         }
       }
+    }
+
+    /**
+     * Tags an EC2 instance. Expects that the instance already exists or is in the process of
+     * being created. This may also tag EBS volumes depending on template configurations.
+     *
+     * @param template          the instance template
+     * @param userDefinedTags   the user-defined tags
+     * @param virtualInstanceId the virtual instance id
+     * @param ec2InstanceId     the EC2 instance id
+     * @return true if the instance was successfully tagged, false otherwise
+     * @throws InterruptedException if the operation is interrupted
+     */
+    private boolean tagSpotInstance(EC2InstanceTemplate template, List<Tag> userDefinedTags,
+                                String virtualInstanceId, String ec2InstanceId) throws InterruptedException {
+      LOG.info(">> Tagging instance {} / {}", ec2InstanceId, virtualInstanceId);
+
+      // We have to individually tag the spot instance and it's associated volumes
+      // since AWS doesn't allow specifying tags as part of the launch request for
+      // spot instances.
+
+      // Wait for the instance to be started. If it is terminating, skip tagging.
+      if (!waitUntilInstanceHasStarted(ec2InstanceId)) {
+        return false;
+      }
+
+      List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+      client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
+
+      // Tag EBS volumes if they were part of instance launch request
+      if (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST) {
+        tagSpotEbsVolumes(ec2InstanceId, virtualInstanceId, tags);
+      }
+
+      return true;
+    }
+
+    private void tagSpotEbsVolumes(String ec2InstanceId, String virtualInstanceId, List<Tag> tags)
+        throws InterruptedException {
+      DescribeInstancesResult result = client.describeInstances(
+          new DescribeInstancesRequest().withInstanceIds(Collections.singletonList(ec2InstanceId))
+      );
+      List<InstanceBlockDeviceMapping> instanceBlockDeviceMappings =
+          getOnlyElement(getOnlyElement(result.getReservations()).getInstances()).getBlockDeviceMappings();
+      for (InstanceBlockDeviceMapping instanceBlockDeviceMapping : instanceBlockDeviceMappings) {
+        String volumeId = instanceBlockDeviceMapping.getEbs().getVolumeId();
+        tagSpotEbsVolume(template, tags, virtualInstanceId, volumeId);
+      }
+    }
+
+    private void tagSpotEbsVolume(EC2InstanceTemplate template, List<Tag> userDefinedTags,
+                          String virtualInstanceId, String volumeId) throws InterruptedException {
+      LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
+      List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+      client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
     }
 
     /**
@@ -2707,10 +2796,25 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
      * @param e the exception
      * @return the error message for the specified exception
      */
-    @VisibleForTesting
-    protected String getErrorMessage(Exception e) {
+    private String getErrorMessage(Exception e) {
       String message = e.getMessage();
       return (message == null) ? e.getClass().getSimpleName() : message;
+    }
+
+    /**
+     * Determines the idempotency client token for the specified virtual instance ID.
+     *
+     * @param virtualInstanceId the virtual instance ID
+     * @param discriminator a discriminator to further identify this request
+     * @return the idempotency token
+     */
+    private String determineClientToken(String virtualInstanceId, Long discriminator) {
+      // Using MD5 because clientToken should be less than 64 characters long
+      Hasher hasher = Hashing.md5().newHasher(virtualInstanceIds.size());
+
+      hasher.putString(virtualInstanceId, Charsets.UTF_8);
+      hasher.putLong(discriminator);
+      return hasher.hash().toString();
     }
   }
 }

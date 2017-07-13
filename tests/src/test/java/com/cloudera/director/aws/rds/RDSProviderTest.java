@@ -33,9 +33,11 @@ import static org.junit.Assert.fail;
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.Tags.InstanceTags;
+import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.common.AmazonRDSClientProvider;
+import com.cloudera.director.aws.shaded.com.amazonaws.ClientConfiguration;
+import com.cloudera.director.aws.shaded.com.amazonaws.ClientConfigurationFactory;
 import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProvider;
-import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
-import com.cloudera.director.aws.shaded.com.amazonaws.services.rds.AmazonRDSClient;
 import com.cloudera.director.spi.v1.database.DatabaseType;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.InstanceState;
@@ -122,7 +124,7 @@ public class RDSProviderTest {
       String username = System.getProperty("user.name");
 
       // Configure provider
-      Map<String, String> providerConfigMap = new LinkedHashMap<String, String>();
+      Map<String, String> providerConfigMap = new LinkedHashMap<>();
       putConfig(providerConfigMap, REGION, testRegion);
 
       // Configure endpoints
@@ -136,20 +138,24 @@ public class RDSProviderTest {
                                                        DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure credentials
-      Map<String, String> credentialsConfigMap = new LinkedHashMap<String, String>();
+      Map<String, String> credentialsConfigMap = new LinkedHashMap<>();
       SimpleConfiguration credentialsConfig = new SimpleConfiguration(credentialsConfigMap);
       AWSCredentialsProvider credentialsProvider =
           new AWSCredentialsProviderChainProvider().createCredentials(credentialsConfig,
               DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+      ClientConfiguration clientConfiguration = new ClientConfigurationFactory().getConfig();
 
       // Create provider
-      RDSProvider rdsProvider = new RDSProvider(new SimpleConfiguration(providerConfigMap),
-          endpoints, encryptionInstanceClasses, new AmazonRDSClient(credentialsProvider),
-          new AmazonIdentityManagementClient(credentialsProvider), new CustomTagMappings(null),
+      RDSProvider rdsProvider = new RDSProvider(
+          new SimpleConfiguration(providerConfigMap),
+          encryptionInstanceClasses,
+          new AmazonRDSClientProvider(credentialsProvider, clientConfiguration, endpoints),
+          new AmazonIdentityManagementClientProvider(credentialsProvider, clientConfiguration),
+          new CustomTagMappings(null),
           DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
       // Configure instance template
-      Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<String, String>();
+      Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<>();
       String templateName = username + "-test";
       putConfig(instanceTemplateConfigMap, INSTANCE_NAME_PREFIX, templateName);
 
@@ -166,7 +172,7 @@ public class RDSProviderTest {
       putConfig(instanceTemplateConfigMap, SKIP_FINAL_SNAPSHOT, "true");
       putConfig(instanceTemplateConfigMap, STORAGE_ENCRYPTED, "true");
 
-      Map<String, String> instanceTemplateTags = new LinkedHashMap<String, String>();
+      Map<String, String> instanceTemplateTags = new LinkedHashMap<>();
       instanceTemplateTags.put(InstanceTags.OWNER.getTagKey(), username);
 
       // Create instance template

@@ -18,10 +18,10 @@ import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProvider;
-import com.amazonaws.services.ec2.AmazonEC2Client;
-import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
-import com.amazonaws.services.kms.AWSKMSClient;
-import com.amazonaws.services.rds.AmazonRDSClient;
+import com.cloudera.director.aws.common.AWSKMSClientProvider;
+import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
+import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.common.AmazonRDSClientProvider;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EC2ProviderConfigurationValidator;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
@@ -121,7 +121,7 @@ public class AWSProvider extends AbstractCloudProvider {
   /**
    * The AWS config.
    */
-  private final AWSClientConfig awsClientConfig;
+  private final ClientConfiguration clientConfiguration;
 
   /**
    * The AWS filters.
@@ -142,6 +142,26 @@ public class AWSProvider extends AbstractCloudProvider {
    * The network rules.
    */
   private final NetworkRules networkRules;
+
+  /**
+   * An Amazon EC2 client provider.
+   */
+  private final AmazonEC2ClientProvider amazonEC2ClientProvider;
+
+  /**
+   * An Amazon identity management client provider.
+   */
+  private final AmazonIdentityManagementClientProvider amazonIdentityManagementClientProvider;
+
+  /**
+   * An Amazon KMS client provider.
+   */
+  private final AWSKMSClientProvider awskmsClientProvider;
+
+  /**
+   * An Amazon RDS client provider.
+   */
+  private final AmazonRDSClientProvider amazonRDSClientProvider;
 
   /**
    * Creates an AWS provider with the specified parameters.
@@ -196,7 +216,8 @@ public class AWSProvider extends AbstractCloudProvider {
    * @param rootLocalizationContext      the root localization context
    */
   @SuppressWarnings({"PMD.UnusedFormalParameter", "UnusedParameters"})
-  public AWSProvider(Configured configuration,
+  public AWSProvider(
+      Configured configuration,
       EphemeralDeviceMappings ephemeralDeviceMappings,
       EBSMetadata ebsMetadata,
       VirtualizationMappings virtualizationMappings,
@@ -217,33 +238,42 @@ public class AWSProvider extends AbstractCloudProvider {
     this.virtualizationMappings = virtualizationMappings;
     this.rdsEndpoints = rdsEndpoints;
     this.rdsEncryptionInstanceClasses = rdsEncryptionInstanceClasses;
-    this.awsClientConfig = awsClientConfig;
+    this.clientConfiguration = getClientConfiguration(awsClientConfig);
     this.awsFilters = checkNotNull(awsFilters, "awsFilters is null");
     this.awsTimeouts = checkNotNull(awsTimeouts, "awsTimeouts is null");
     this.customTagMappings = checkNotNull(customTagMappings, "customTagMappings is null");
     this.networkRules = checkNotNull(networkRules, "networkRules is null");
+
+    this.amazonEC2ClientProvider = new AmazonEC2ClientProvider(
+        this.credentialsProvider, this.clientConfiguration);
+    this.amazonIdentityManagementClientProvider = new AmazonIdentityManagementClientProvider(
+        this.credentialsProvider, this.clientConfiguration);
+    this.awskmsClientProvider = new AWSKMSClientProvider(
+        this.credentialsProvider, this.clientConfiguration);
+    this.amazonRDSClientProvider = new AmazonRDSClientProvider(
+        this.credentialsProvider, this.clientConfiguration, this.rdsEndpoints);
   }
 
   @Override
   protected ConfigurationValidator getResourceProviderConfigurationValidator(
       ResourceProviderMetadata resourceProviderMetadata) {
-    ClientConfiguration clientConfiguration = getClientConfiguration();
     ConfigurationValidator providerSpecificValidator;
+
     if (resourceProviderMetadata.getId().equals(EC2Provider.METADATA.getId())) {
-      AmazonEC2Client client = new AmazonEC2Client(credentialsProvider, clientConfiguration);
-      AmazonIdentityManagementClient identityManagementClient =
-          new AmazonIdentityManagementClient(credentialsProvider, clientConfiguration);
-      AWSKMSClient kmsClient =
-          new AWSKMSClient(credentialsProvider, clientConfiguration);
-      providerSpecificValidator =
-          new EC2ProviderConfigurationValidator(client, identityManagementClient, kmsClient);
+      providerSpecificValidator = new EC2ProviderConfigurationValidator(
+          amazonEC2ClientProvider,
+          amazonIdentityManagementClientProvider,
+          awskmsClientProvider);
+
     } else if (resourceProviderMetadata.getId().equals(RDSProvider.METADATA.getId())) {
-      AmazonRDSClient client = new AmazonRDSClient(credentialsProvider, clientConfiguration);
-      providerSpecificValidator = new RDSProviderConfigurationValidator(client, rdsEndpoints);
+      providerSpecificValidator = new RDSProviderConfigurationValidator(amazonRDSClientProvider);
+
     } else {
       throw new IllegalArgumentException("No such provider: " + resourceProviderMetadata.getId());
     }
-    return new CompositeConfigurationValidator(METADATA.getProviderConfigurationValidator(),
+
+    return new CompositeConfigurationValidator(
+        METADATA.getProviderConfigurationValidator(),
         providerSpecificValidator);
   }
 
@@ -267,13 +297,11 @@ public class AWSProvider extends AbstractCloudProvider {
    * @return the EC2 provider
    */
   protected EC2Provider createEC2Provider(Configured target) {
-    ClientConfiguration clientConfiguration = getClientConfiguration();
+    LocalizationContext localizationContext = getLocalizationContext();
     return new EC2Provider(target, ephemeralDeviceMappings, ebsMetadata,
         virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
-        new AmazonEC2Client(credentialsProvider, clientConfiguration),
-        new AmazonIdentityManagementClient(credentialsProvider, clientConfiguration),
-        new AWSKMSClient(credentialsProvider, clientConfiguration),
-        getLocalizationContext());
+        amazonEC2ClientProvider, amazonIdentityManagementClientProvider, awskmsClientProvider,
+        localizationContext);
   }
 
   /**
@@ -283,11 +311,10 @@ public class AWSProvider extends AbstractCloudProvider {
    * @return the RDS provider
    */
   protected RDSProvider createRDSProvider(Configured target) {
-    ClientConfiguration clientConfiguration = getClientConfiguration();
-    return new RDSProvider(target, rdsEndpoints, rdsEncryptionInstanceClasses,
-        new AmazonRDSClient(credentialsProvider, clientConfiguration),
-        new AmazonIdentityManagementClient(credentialsProvider, clientConfiguration),
-        customTagMappings, getLocalizationContext());
+    LocalizationContext localizationContext = getLocalizationContext();
+    return new RDSProvider(target, rdsEncryptionInstanceClasses,
+        amazonRDSClientProvider, amazonIdentityManagementClientProvider,
+        customTagMappings, localizationContext);
   }
 
   /**
@@ -295,7 +322,7 @@ public class AWSProvider extends AbstractCloudProvider {
    *
    * @return the AWS client configuration
    */
-  protected ClientConfiguration getClientConfiguration() {
+  private static ClientConfiguration getClientConfiguration(AWSClientConfig awsClientConfig) {
     return (awsClientConfig == null)
         ? AWSClientConfig.DEFAULT_CLIENT_CONFIG
         : awsClientConfig.getClientConfiguration();

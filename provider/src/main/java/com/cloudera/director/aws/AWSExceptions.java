@@ -43,9 +43,11 @@ public class AWSExceptions {
       // OperationNotPermitted exception is unrecoverable. This can happen when terminating an
       // instance that has termination protection enabled, or trying to detach the primary
       // network interface (eth0) from an instance.
+      // Unsupported exception is also unrecoverable, since it represents an unsupported request.
       // See docs at http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
       if (ase.getErrorType() == AmazonServiceException.ErrorType.Client ||
-        "OperationNotPermitted".equals(ase.getErrorCode())) {
+        "OperationNotPermitted".equals(ase.getErrorCode()) ||
+        "Unsupported".equals(ase.getErrorCode())) {
         throw new UnrecoverableProviderException(ase.getErrorMessage(), ase);
       }
     }

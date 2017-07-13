@@ -17,6 +17,7 @@ package com.cloudera.director.aws.ec2;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_OPTIMIZED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
@@ -101,6 +102,25 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .defaultDescription("The availability zone.")
         .hidden(true)
+        .build()),
+
+    /**
+     * Whether to enable EBS Optimization.
+     *
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSOptimized.html">EBS–Optimized Instances</a>
+     */
+    EBS_OPTIMIZED(new SimpleConfigurationPropertyBuilder()
+        .configKey("ebsOptimized")
+        .name("EBS Optimized")
+        .type(Property.Type.BOOLEAN)
+        .defaultValue("false")
+        .widget(ConfigurationProperty.Widget.CHECKBOX)
+        .defaultDescription(
+            "Specify whether to enable EBS Optimized I/O. This optimization isn't available with all instance types. " +
+                "Some instance types are EBS Optimized by default regardless of this flag. Additional usage charges " +
+                "may apply when using an EBS-optimized instance<br/>" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSOptimized.html'>More Information</a>"
+        )
         .build()),
 
     /**
@@ -442,6 +462,12 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "i2.2xlarge",
             "i2.4xlarge",
             "i2.8xlarge",
+            "i3.large",
+            "i3.xlarge",
+            "i3.2xlarge",
+            "i3.4xlarge",
+            "i3.8xlarge",
+            "i3.16xlarge",
             "hs1.8xlarge",
             "d2.xlarge",
             "d2.2xlarge",
@@ -533,6 +559,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final String rootVolumeType;
 
   /**
+   * Whether to enable EBS Optimization.
+   */
+  private final boolean ebsOptimized;
+
+  /**
    * Number of additional EBS volumes to mount.
    */
   private final int ebsVolumeCount;
@@ -615,6 +646,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     this.rootVolumeSizeGB =
         Integer.parseInt(getConfigurationValue(ROOT_VOLUME_SIZE_GB, localizationContext));
     this.rootVolumeType = getConfigurationValue(ROOT_VOLUME_TYPE, localizationContext);
+
+    this.ebsOptimized = Boolean.parseBoolean(getConfigurationValue(EBS_OPTIMIZED, localizationContext));
 
     this.ebsVolumeCount = Integer.parseInt(getConfigurationValue(EBS_VOLUME_COUNT, localizationContext));
     this.ebsVolumeSizeGiB = Integer.parseInt(getConfigurationValue(EBS_VOLUME_SIZE_GIB, localizationContext));
@@ -724,6 +757,14 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     return rootVolumeType;
   }
 
+  /**
+   * Whether to enable EBS Optimization.
+   *
+   * @return whether to enable EBS Optimization
+   */
+  public boolean isEbsOptimized() {
+    return ebsOptimized;
+  }
 
   /**
    * Returns the EBS volume count.

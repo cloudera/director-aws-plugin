@@ -107,6 +107,7 @@ import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -526,6 +527,7 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     when(ec2Client.describeSubnets(any(DescribeSubnetsRequest.class)))
         .thenReturn(dsResult);
     when(dsResult.getSubnets()).thenReturn(Collections.singletonList(subnet));
+    when(subnet.getVpcId()).thenReturn("test-vpc-id");
 
     String subnetId = "subnet";
     checkSubnetId(subnetId);
@@ -601,6 +603,19 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
         Lists.newArrayList(securityGroup, securityGroup));
 
     checkSecurityGroupIds(Collections.singletonList("securityGroup"));
+    verifySingleError(SECURITY_GROUP_IDS);
+  }
+
+  @Test
+  public void testCheckVpc() {
+    Map<String, String> vpcSubnetMap = ImmutableMap.of("vpc-1111", "subnet-1111");
+    Map<String, Set<String>> vpcSgMap = Maps.newHashMap();
+    vpcSgMap.put("vpc-1111", ImmutableSet.of("sg-1111", "sg-1112"));
+    checkVpc(vpcSubnetMap, vpcSgMap);
+    verifyClean();
+
+    vpcSgMap.put("vpc-2222", ImmutableSet.of("sg-2222"));
+    checkVpc(vpcSubnetMap, vpcSgMap);
     verifySingleError(SECURITY_GROUP_IDS);
   }
 
@@ -932,6 +947,11 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
         Joiner.on(',').join(securityGroupIds));
     Configured configuration = new SimpleConfiguration(configMap);
     validator.checkSecurityGroupIds(ec2Client, configuration, accumulator, localizationContext);
+  }
+
+  private void checkVpc(Map<String, String> vpcSubnetMap,
+                        Map<String, Set<String>> vpcSecurityGroupMap) {
+    validator.checkVpc(vpcSubnetMap, vpcSecurityGroupMap, accumulator, localizationContext);
   }
 
   /**

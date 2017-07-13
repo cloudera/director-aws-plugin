@@ -1,0 +1,4 @@
+com.cloudera.director.aws.shaded.com.amazonaws.services.rds.CopyDBClusterSnapshotPresignHandler
+com.cloudera.director.aws.shaded.com.amazonaws.services.rds.CopyDBSnapshotPresignHandler
+com.cloudera.director.aws.shaded.com.amazonaws.services.rds.CreateDBClusterPresignHandler
+com.cloudera.director.aws.shaded.com.amazonaws.services.rds.CreateDBInstanceReadReplicaPresignHandler

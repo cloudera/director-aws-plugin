@@ -14,11 +14,11 @@
 
 package com.cloudera.director.aws.ec2;
 
-import static com.google.common.base.Preconditions.checkNotNull;
+import static java.util.Objects.requireNonNull;
 
-import com.amazonaws.services.ec2.AmazonEC2Client;
-import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
-import com.amazonaws.services.kms.AWSKMSClient;
+import com.cloudera.director.aws.common.AWSKMSClientProvider;
+import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
+import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
 import com.cloudera.director.spi.v1.model.ConfigurationValidator;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
@@ -30,42 +30,43 @@ import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccu
 public class EC2ProviderConfigurationValidator implements ConfigurationValidator {
 
   /**
-   * The EC2 client.
+   * The EC2 client provider.
    */
-  private final AmazonEC2Client client;
+  private final AmazonEC2ClientProvider clientProvider;
 
   /**
-   * The IAM client.
+   * The IAM client provider.
    */
-  private final AmazonIdentityManagementClient identityManagementClient;
+  private final AmazonIdentityManagementClientProvider identityManagementClientProvider;
 
   /**
-   * The KMS client.
+   * The KMS client provider.
    */
-  private final AWSKMSClient kmsClient;
+  private final AWSKMSClientProvider kmsClientProvider;
 
   /**
    * Creates an EC2 provider configuration validator with the specified parameters.
    *
-   * @param client the EC2 client
-   * @param identityManagementClient the IAM client
-   * @param kmsClient the KMS client
+   * @param clientProvider                   the EC2 client provider
+   * @param identityManagementClientProvider the IAM client provider
+   * @param kmsClientProvider                the KMS client provider
    */
-  public EC2ProviderConfigurationValidator(AmazonEC2Client client,
-                                           AmazonIdentityManagementClient identityManagementClient,
-                                           AWSKMSClient kmsClient) {
-    this.client = checkNotNull(client, "client is null");
-    this.identityManagementClient = checkNotNull(identityManagementClient,
-                                                 "identityManagementClient is null");
-    this.kmsClient = checkNotNull(kmsClient, "kmsClient is null");
+  public EC2ProviderConfigurationValidator(
+      AmazonEC2ClientProvider clientProvider,
+      AmazonIdentityManagementClientProvider identityManagementClientProvider,
+      AWSKMSClientProvider kmsClientProvider) {
+    this.clientProvider = requireNonNull(clientProvider, "clientProvider is null");
+    this.identityManagementClientProvider = requireNonNull(
+        identityManagementClientProvider, "identityManagementClientProvider is null");
+    this.kmsClientProvider = requireNonNull(kmsClientProvider, "kmsClientProvider is null");
   }
 
   @Override
   public void validate(String name, Configured configuration,
       PluginExceptionConditionAccumulator accumulator, LocalizationContext localizationContext) {
-    EC2Provider.configureClient(configuration, accumulator, client, localizationContext, true);
-    EC2Provider.configureIAMClient(configuration, accumulator, identityManagementClient,
-                                   localizationContext, true);
-    EC2Provider.configureKmsClient(configuration, accumulator, kmsClient, localizationContext);
+
+    clientProvider.getClient(configuration, accumulator, localizationContext, true);
+    identityManagementClientProvider.getClient(configuration, accumulator, localizationContext, true);
+    kmsClientProvider.getClient(configuration, accumulator, localizationContext, true);
   }
 }

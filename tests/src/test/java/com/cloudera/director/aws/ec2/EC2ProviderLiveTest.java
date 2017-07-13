@@ -27,8 +27,8 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION;
 import static com.cloudera.director.spi.v1.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
 import static org.junit.Assert.assertEquals;
@@ -37,7 +37,10 @@ import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeFalse;
 import static org.junit.Assume.assumeNotNull;
 import static org.junit.Assume.assumeTrue;
+import static org.mockito.Matchers.any;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.when;
 
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
@@ -46,11 +49,19 @@ import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.Tags;
 import com.cloudera.director.aws.Tags.InstanceTags;
+import com.cloudera.director.aws.common.AWSKMSClientProvider;
+import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
+import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.shaded.com.amazonaws.AmazonServiceException;
+import com.cloudera.director.aws.shaded.com.amazonaws.ClientConfiguration;
+import com.cloudera.director.aws.shaded.com.amazonaws.ClientConfigurationFactory;
 import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProvider;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2Client;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeInstanceStatusRequest;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeSpotInstanceRequestsResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeVolumesRequest;
@@ -61,8 +72,6 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.SpotIns
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Tag;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Volume;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.VolumeState;
-import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
-import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.AWSKMSClient;
 import com.cloudera.director.aws.shaded.com.typesafe.config.Config;
 import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigValueFactory;
 import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
@@ -70,6 +79,8 @@ import com.cloudera.director.spi.v1.model.ConfigurationPropertyValue;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.InstanceState;
 import com.cloudera.director.spi.v1.model.InstanceStatus;
+import com.cloudera.director.spi.v1.model.LocalizationContext;
+import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
 import com.google.common.collect.ImmutableList;
@@ -100,6 +111,9 @@ import org.junit.experimental.runners.Enclosed;
 import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
+import org.mockito.internal.stubbing.answers.CallsRealMethods;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 /**
  * Tests {@link EC2Provider}.
@@ -132,7 +146,13 @@ public class EC2ProviderLiveTest {
   }
 
   private static EC2Provider getEc2Provider(Configured configuration,
-                                            AWSCredentialsProvider credentialsProvider) {
+      AWSCredentialsProvider credentialsProvider) {
+    return getEc2Provider(configuration, credentialsProvider,
+        new AmazonEC2ClientProvider(credentialsProvider, new ClientConfigurationFactory().getConfig()));
+  }
+
+  private static EC2Provider getEc2Provider(Configured configuration,
+      AWSCredentialsProvider credentialsProvider, AmazonEC2ClientProvider amazonEC2ClientProvider) {
     // Configure ephemeral device mappings
     EphemeralDeviceMappings ephemeralDeviceMappings =
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.medium", 1),
@@ -152,19 +172,21 @@ public class EC2ProviderLiveTest {
     AWSFilters awsFilters = AWSFilters.EMPTY_FILTERS;
     AWSTimeouts awsTimeouts = new AWSTimeouts(null);
     CustomTagMappings customTagMappings = new CustomTagMappings(CUSTOM_TAG_MAPPING_CONFIG);
+    ClientConfiguration clientConfiguration = new ClientConfigurationFactory().getConfig();
 
-    return new EC2Provider(configuration,
-                           ephemeralDeviceMappings,
-                           ebsMetadata,
-                           virtualizationMappings,
-                           awsFilters,
-                           awsTimeouts,
-                           customTagMappings,
-                           NetworkRules.EMPTY_RULES,
-                           new AmazonEC2Client(credentialsProvider),
-                           new AmazonIdentityManagementClient(credentialsProvider),
-                           new AWSKMSClient(credentialsProvider),
-                           DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+    return new EC2Provider(
+        configuration,
+        ephemeralDeviceMappings,
+        ebsMetadata,
+        virtualizationMappings,
+        awsFilters,
+        awsTimeouts,
+        customTagMappings,
+        NetworkRules.EMPTY_RULES,
+        amazonEC2ClientProvider,
+        new AmazonIdentityManagementClientProvider(credentialsProvider, clientConfiguration),
+        new AWSKMSClientProvider(credentialsProvider, clientConfiguration),
+        DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
   }
 
   public static class NotParameterizedTest {
@@ -384,9 +406,58 @@ public class EC2ProviderLiveTest {
       putConfig(providerConfigMap, REGION, region);
 
       // Create provider
+      AmazonEC2ClientSpyProvider clientSpyProvider =
+          new AmazonEC2ClientSpyProvider(credentialsProvider,
+              new ClientConfigurationFactory().getConfig());
       EC2Provider ec2Provider = getEc2Provider(new SimpleConfiguration(providerConfigMap),
-                                               credentialsProvider);
+                                               credentialsProvider, clientSpyProvider);
       CustomTagMappings customTagMappings = ec2Provider.getEC2TagHelper().getCustomTagMappings();
+
+      // mock eventual consistency when waiting for instances to start
+      // NOTE: client spy must be retrieved after getEc2Provider is called
+      AmazonEC2AsyncClient ec2AsyncClientSpy = clientSpyProvider.getClientSpy();
+      final AmazonServiceException eventualConsistencyException =
+          new AmazonServiceException("Eventual consistency exception");
+      eventualConsistencyException.setErrorCode(EC2Provider.INVALID_INSTANCE_ID_NOT_FOUND);
+      Answer<Object> describeInstanceStatusAnswer = new CallsRealMethods() {
+        private Map<String, Integer> instancesTimesSeen = Maps.newHashMap();
+
+        @Override
+        public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+          // simulate eventual consistency failure the first time we see each instance
+          int minTimesSeen = Integer.MAX_VALUE;
+          for (String instanceId : invocationOnMock
+              .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds()) {
+            Integer timesSeen = instancesTimesSeen.get(instanceId);
+            if (timesSeen == null) {
+              timesSeen = 0;
+            }
+            minTimesSeen = Math.min(minTimesSeen, timesSeen);
+            instancesTimesSeen.put(instanceId, timesSeen + 1);
+          }
+          if (minTimesSeen == 0 || minTimesSeen == 2) {
+            LOG.info("Simulating eventual consistency exception. Instances seen " + minTimesSeen +
+                " times. " + invocationOnMock);
+            throw eventualConsistencyException;
+          }
+
+          DescribeInstanceStatusResult result =
+              (DescribeInstanceStatusResult) super.answer(invocationOnMock);
+          if (minTimesSeen == 1) {
+            for (com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceStatus
+                instanceStatus : result.getInstanceStatuses()) {
+              com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceState
+                  instanceState = instanceStatus.getInstanceState();
+              instanceState.setCode(0);
+              instanceState.setName(com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceStateName.Pending);
+            }
+            LOG.info("Instances seen " + minTimesSeen + " time. Modified result = " + result);
+          }
+          return result;
+        }
+      };
+      doAnswer(describeInstanceStatusAnswer)
+          .when(ec2AsyncClientSpy).describeInstanceStatus(any(DescribeInstanceStatusRequest.class));
 
       // Configure instance template
       Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<>();
@@ -684,9 +755,9 @@ public class EC2ProviderLiveTest {
      * @throws InterruptedException if the process is interrupted
      */
     private Map<String, InstanceState> waitForInstanceStates(EC2Provider ec2Provider,
-                                                             EC2InstanceTemplate instanceTemplate, Collection<String> virtualInstanceIds,
-                                                             Collection<InstanceStatus> desiredInstanceStatuses,
-                                                             Collection<InstanceStatus> terminalInstanceStatuses) throws InterruptedException {
+        EC2InstanceTemplate instanceTemplate, Collection<String> virtualInstanceIds,
+        Collection<InstanceStatus> desiredInstanceStatuses,
+        Collection<InstanceStatus> terminalInstanceStatuses) throws InterruptedException {
 
       Map<String, InstanceState> instanceStates = Maps.newHashMap();
       Set<String> pendingInstanceIds = Sets.newHashSet(virtualInstanceIds);
@@ -777,6 +848,33 @@ public class EC2ProviderLiveTest {
         }
         LOG.info("Done verifying blockDurationMinutes");
       }
+    }
+  }
+
+  private static class AmazonEC2ClientSpyProvider extends AmazonEC2ClientProvider {
+    private AmazonEC2AsyncClient clientSpy = null;
+
+    public AmazonEC2ClientSpyProvider(AWSCredentialsProvider awsCredentialsProvider,
+        ClientConfiguration clientConfiguration) {
+      super(awsCredentialsProvider, clientConfiguration);
+    }
+
+    public synchronized AmazonEC2AsyncClient getClientSpy() {
+      if (clientSpy == null) {
+        throw new IllegalStateException(
+            "clientSpy has not be set yet. getClient must be called before getting the clientSpy");
+      }
+      return clientSpy;
+    }
+
+    @Override
+    public synchronized AmazonEC2AsyncClient getClient(Configured configuration,
+        PluginExceptionConditionAccumulator accumulator,
+        LocalizationContext providerLocalizationContext,
+        boolean verify) {
+      clientSpy = spy(
+          super.getClient(configuration, accumulator, providerLocalizationContext, verify));
+      return clientSpy;
     }
   }
 }
