@@ -114,6 +114,7 @@ import com.google.common.base.Function;
 import com.google.common.base.Optional;
 import com.google.common.base.Predicate;
 import com.google.common.base.Predicates;
+import com.google.common.base.Stopwatch;
 import com.google.common.collect.BiMap;
 import com.google.common.collect.Collections2;
 import com.google.common.collect.HashBiMap;
@@ -239,6 +240,12 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   static final String INVALID_INSTANCE_ID_NOT_FOUND = "InvalidInstanceID.NotFound";
 
   /**
+   * Spot Instance Request ID not found failure string. This may indicate an eventual consistency issue.
+   */
+  @VisibleForTesting
+  static final String INVALID_SPOT_INSTANCE_REQUEST_ID_NOT_FOUND = "InvalidSpotInstanceRequestID.NotFound";
+
+  /**
    * The resource provider ID.
    */
   public static final String ID = EC2Provider.class.getCanonicalName();
@@ -255,6 +262,17 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       .resourceTemplateConfigurationProperties(EC2InstanceTemplate.getConfigurationProperties())
       .resourceDisplayProperties(EC2Instance.getDisplayProperties())
       .build();
+
+  /**
+   * The default wait until tagged instances are findable, in milliseconds.
+   */
+  public static final long DEFAULT_INSTANCE_WAIT_UNTIL_FINDABLE_MS = 10 * 60 * 1000; //10 min
+
+  /**
+   * The key for the wait until instances are findable.
+   */
+  public static final String INSTANCE_WAIT_UNTIL_FINDABLE_MS =
+      "ec2.instance.waitUntilFindableMilliseconds";
 
   /**
    * The default spot instance request duration, in milliseconds.
@@ -461,6 +479,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private final boolean importKeyPairIfMissing;
   private final String keyNamePrefix;
   private final long spotRequestDuration;
+  private final long waitUntilFindableMillis;
 
   private final ConfigurationValidator resourceTemplateConfigurationValidator;
 
@@ -534,6 +553,9 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     this.spotRequestDuration =
         awsTimeouts.getTimeout(SPOT_INSTANCE_REQUEST_DURATION_MS).or(DEFAULT_SPOT_INSTANCE_REQUEST_DURATION_MS);
+
+    this.waitUntilFindableMillis =
+        awsTimeouts.getTimeout(INSTANCE_WAIT_UNTIL_FINDABLE_MS).or(DEFAULT_INSTANCE_WAIT_UNTIL_FINDABLE_MS);
 
     this.resourceTemplateConfigurationValidator =
         new CompositeConfigurationValidator(
@@ -2101,8 +2123,34 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
               spotAllocationRecordsByVirtualInstanceId.remove(terminatedInstanceId);
             }
 
+            // Wait until we can "find" all the allocated virtual instance ids
+            // This will mitigate, but not remove, the possibility that eventual consistency
+            // will cause us to not find the instances we just allocated.
+            Collection<String> allocatedVirtualInstances = getVirtualInstanceIdsAllocated();
+            int numAllocatedInstances = allocatedVirtualInstances.size();
+            Collection<EC2Instance> foundInstances = find(template, allocatedVirtualInstances);
+            int numFoundInstances = foundInstances.size();
+            Stopwatch stopwatch = Stopwatch.createStarted();
+            while (numFoundInstances != numAllocatedInstances &&
+                stopwatch.elapsed(TimeUnit.MILLISECONDS) < waitUntilFindableMillis) {
+              LOG.info("Found {} Spot instances while expecting {}. Waiting for all Spot " +
+                      "instances to be findable",
+                  numFoundInstances, numAllocatedInstances);
+              TimeUnit.SECONDS.sleep(5);
+              foundInstances = find(template, allocatedVirtualInstances);
+              numFoundInstances = foundInstances.size();
+            }
+            if (numFoundInstances == numAllocatedInstances) {
+              LOG.info("Found all {} allocated Spot instances.", numAllocatedInstances);
+            } else {
+              LOG.warn("Found only {} of {} Spot instances before wait timeout of {} ms. " +
+                      "Continuing anyway.",
+                  numFoundInstances, numAllocatedInstances, waitUntilFindableMillis);
+              LOG.debug("Expecting {}. Found {}.", allocatedVirtualInstances, foundInstances);
+            }
+
             success = true;
-            return getVirtualInstanceIdsAllocated();
+            return allocatedVirtualInstances;
           }
         } finally {
           try {
@@ -2772,12 +2820,25 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       }
 
       if (!spotInstanceRequestIds.isEmpty()) {
-        LOG.info(">> Canceling Spot instance requests {}", spotInstanceRequestIds);
-        CancelSpotInstanceRequestsResult cancelResult;
+        CancelSpotInstanceRequestsResult cancelResult = null;
         try {
-          cancelResult = client.cancelSpotInstanceRequests(
-              new CancelSpotInstanceRequestsRequest().withSpotInstanceRequestIds(spotInstanceRequestIds));
-          LOG.info("<< Result {}", cancelResult);
+          long expirationTime = requestExpirationTime.getTime();
+          while (cancelResult == null && System.currentTimeMillis() < expirationTime) {
+            LOG.info(">> Canceling Spot instance requests {}", spotInstanceRequestIds);
+            try {
+              cancelResult = client.cancelSpotInstanceRequests(
+                  new CancelSpotInstanceRequestsRequest().withSpotInstanceRequestIds(spotInstanceRequestIds));
+              LOG.info("<< Result {}", cancelResult);
+            } catch (AmazonServiceException e) {
+              if (!INVALID_SPOT_INSTANCE_REQUEST_ID_NOT_FOUND.equals(e.getErrorCode())) {
+                LOG.warn("Possible eventual consistency issue when canceling spot instance requests:", e);
+                TimeUnit.SECONDS.sleep(5);
+              } else {
+                // let outer try handle this
+                throw e;
+              }
+            }
+          }
           waitForSpotInstances(spotInstanceRequestIds, true);
         } catch (AmazonClientException e) {
           throw AWSExceptions.propagate(e);

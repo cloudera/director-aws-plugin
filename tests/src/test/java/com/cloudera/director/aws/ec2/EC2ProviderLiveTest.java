@@ -588,8 +588,7 @@ public class EC2ProviderLiveTest {
                 // EBS volumes should also have the tags from instance template
                 Map<String, String> volumeTags = listTagToMap(volume.getTags());
                 for (Map.Entry<String, String> entry : instanceTemplateTags.entrySet()) {
-                  String customTagName = customTagMappings.getCustomTagName(entry.getKey());
-                  assertTrue(volumeTags.containsKey(customTagName));
+                  assertTrue(volumeTags.containsKey(entry.getKey()));
                   assertTrue(volumeTags.containsValue(entry.getValue()));
                 }
               } else if (volumeType.equals(ROOT_VOLUME_TYPE.unwrap().getDefaultValue())) {

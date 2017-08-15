@@ -102,11 +102,11 @@ public class AbstractAWSTagHelperTest {
     when(customTagMappings.getCustomTagName("t1"))
         .thenReturn("c1");
     when(customTagMappings.getCustomTagName("t2"))
-        .thenReturn("t2");
+        .thenReturn("c2");
 
     TestAWSTagHelper tagHelper = new TestAWSTagHelper(customTagMappings);
     Set<String> userDefinedTags = new HashSet<>(tagHelper.getUserDefinedTags(instanceTemplate));
-    assertEquals(new HashSet<>(Arrays.asList(createTestTag("c1", "v1"), createTestTag("t2", "v2"))),
+    assertEquals(new HashSet<>(Arrays.asList(createTestTag("t1", "v1"), createTestTag("t2", "v2"))),
         userDefinedTags);
   }
 

@@ -136,7 +136,7 @@ public abstract class AbstractAWSTagHelper<T> {
   public List<T> getUserDefinedTags(InstanceTemplate template) {
     List<T> userDefinedTags = Lists.newArrayListWithExpectedSize(template.getTags().size());
     for (Map.Entry<String, String> entry : template.getTags().entrySet()) {
-      userDefinedTags.add(createTag(entry.getKey(), entry.getValue()));
+      userDefinedTags.add(createTagImpl(entry.getKey(), entry.getValue()));
     }
     return userDefinedTags;
   }
