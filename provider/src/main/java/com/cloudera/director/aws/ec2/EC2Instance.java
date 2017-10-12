@@ -17,12 +17,12 @@ package com.cloudera.director.aws.ec2;
 import com.amazonaws.services.ec2.model.GroupIdentifier;
 import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.InstanceLifecycleType;
-import com.cloudera.director.spi.v1.compute.VirtualizationType;
-import com.cloudera.director.spi.v1.compute.util.AbstractComputeInstance;
-import com.cloudera.director.spi.v1.model.DisplayProperty;
-import com.cloudera.director.spi.v1.model.DisplayPropertyToken;
-import com.cloudera.director.spi.v1.model.util.SimpleDisplayPropertyBuilder;
-import com.cloudera.director.spi.v1.util.DisplayPropertiesUtil;
+import com.cloudera.director.spi.v2.compute.VirtualizationType;
+import com.cloudera.director.spi.v2.compute.util.AbstractComputeInstance;
+import com.cloudera.director.spi.v2.model.DisplayProperty;
+import com.cloudera.director.spi.v2.model.DisplayPropertyToken;
+import com.cloudera.director.spi.v2.model.util.SimpleDisplayPropertyBuilder;
+import com.cloudera.director.spi.v2.util.DisplayPropertiesUtil;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
@@ -591,7 +591,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
    * @return the private IP address of the specified EC2 instance
    * @throws IllegalArgumentException if the instance does not have a valid private IP address
    */
-  private static InetAddress getPrivateIpAddress(Instance instance) {
+  static InetAddress getPrivateIpAddress(Instance instance) {
     Preconditions.checkNotNull(instance, "instance is null");
     InetAddress privateIpAddress = null;
     try {

@@ -15,8 +15,8 @@
 package com.cloudera.director.aws.ec2;
 
 import com.amazonaws.services.ec2.model.InstanceStateName;
-import com.cloudera.director.spi.v1.model.InstanceStatus;
-import com.cloudera.director.spi.v1.model.util.AbstractInstanceState;
+import com.cloudera.director.spi.v2.model.InstanceStatus;
+import com.cloudera.director.spi.v2.model.util.AbstractInstanceState;
 import com.google.common.collect.Maps;
 
 import java.util.Collections;

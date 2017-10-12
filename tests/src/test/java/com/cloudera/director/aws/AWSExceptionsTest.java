@@ -16,9 +16,9 @@ package com.cloudera.director.aws;
 
 import com.cloudera.director.aws.shaded.com.amazonaws.AmazonClientException;
 import com.cloudera.director.aws.shaded.com.amazonaws.AmazonServiceException;
-import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
-import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v2.model.exception.InvalidCredentialsException;
+import com.cloudera.director.spi.v2.model.exception.TransientProviderException;
+import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
 import org.junit.Test;
 
 public class AWSExceptionsTest {

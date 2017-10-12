@@ -16,11 +16,11 @@ package com.cloudera.director.aws.common;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.typesafe.config.Config;
 
 import java.util.Collections;
@@ -34,7 +34,7 @@ import java.util.logging.Logger;
  * Wraps a HOCON config fragment object as an SPI configured object.
  *
  * @see com.typesafe.config.Config
- * @see com.cloudera.director.spi.v1.model.Configured
+ * @see com.cloudera.director.spi.v2.model.Configured
  */
 public class ConfigFragmentWrapper implements Configured {
 

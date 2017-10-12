@@ -22,6 +22,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
@@ -30,15 +31,15 @@ import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.aws.rds.RDSProvider;
-import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.provider.CloudProviderMetadata;
-import com.cloudera.director.spi.v1.provider.CredentialsProviderMetadata;
-import com.cloudera.director.spi.v1.provider.ResourceProvider;
-import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
+import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.provider.CloudProviderMetadata;
+import com.cloudera.director.spi.v2.provider.CredentialsProviderMetadata;
+import com.cloudera.director.spi.v2.provider.ResourceProvider;
+import com.cloudera.director.spi.v2.provider.ResourceProviderMetadata;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
@@ -74,6 +75,12 @@ public class AWSProviderTest {
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.large", 1),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
+    // Configure ebs device mappings
+    EBSDeviceMappings ebsDeviceMappings =
+        EBSDeviceMappings.getDefaultInstance(ImmutableMap.<String, String>of(),
+            DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
+
     // Configure EBS metadata
     EBSMetadata ebsMetadata =
         EBSMetadata.getDefaultInstance(ImmutableMap.of("st1", "500-16384"),
@@ -108,7 +115,7 @@ public class AWSProviderTest {
     AWSClientConfig awsClientConfig = new AWSClientConfig(new SimpleConfiguration(),
         httpProxyParameters, cloudLocalizationContext);
     Configured configuration = new SimpleConfiguration(environmentConfig);
-    AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
+    AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints,
         rdsEncryptionInstanceClasses, awsClientConfig,
         awsFilters, awsTimeouts, customTagMappings, NetworkRules.EMPTY_RULES,

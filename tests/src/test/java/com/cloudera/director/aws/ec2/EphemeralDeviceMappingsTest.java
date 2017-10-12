@@ -20,7 +20,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.BlockDeviceMapping;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import com.google.common.io.Resources;
@@ -60,12 +60,6 @@ public class EphemeralDeviceMappingsTest {
     ephemeralDeviceMappings = new EphemeralDeviceMappings(
         new SimpleConfiguration(configurationMap), configurationDirectory,
         DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
-  }
-
-  @Test
-  public void testGetLinuxDeviceNames() {
-    List<String> deviceNames = ephemeralDeviceMappings.getLinuxDeviceNames("/dev/sd", 'a', 3);
-    assertThat(deviceNames).containsExactly("/dev/sda", "/dev/sdb", "/dev/sdc");
   }
 
   @Test

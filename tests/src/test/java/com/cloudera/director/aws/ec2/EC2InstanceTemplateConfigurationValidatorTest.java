@@ -16,6 +16,7 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_IOPS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
@@ -51,15 +52,17 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationVali
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_COUNT_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_SIZE_FORMAT_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_IAM_PROFILE_NAME_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_IOPS_FORMAT_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_KMS_NOT_FOUND_MESSAGE;
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.INVALID_KMS_WHEN_ENCRYPTION_DISABLED_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.IOPS_NOT_IN_RANGE_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.IOPS_NOT_PERMITTED_MSG;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.IOPS_REQUIRED_MSG;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.MAX_VOLUMES_PER_INSTANCE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.MIN_ROOT_VOLUME_SIZE_GB;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.PARAVIRTUAL_VIRTUALIZATION;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.ROOT_VOLUME_TYPES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.VOLUME_SIZE_NOT_IN_RANGE_MSG;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Matchers.anyString;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
@@ -96,13 +99,13 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagemen
 import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.AWSKMSClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.model.DescribeKeyRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.model.NotFoundException;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionCondition;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionCondition;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.google.common.base.Joiner;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
@@ -755,31 +758,32 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
 
     int minAllowedSize = 500;
     int maxAllowedSize = 16384;
-    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
-    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
 
-    checkEbsVolume(volumeType, volumeCount, volumeSize, enableEncryption, Optional.<String>absent());
+    setMockEbsMetadata(volumeType, minAllowedSize, maxAllowedSize);
+
+    checkEbsVolume(volumeType, volumeCount, volumeSize, Optional.<String>absent(), enableEncryption,
+        Optional.<String>absent());
     verifyClean();
   }
 
   @Test
   public void testValidateEbsVolumeCount_NotNumber() {
     String volumeCount = "not a number";
-    checkEbsVolume("st1", volumeCount, "500", "false", Optional.<String>absent());
+    checkEbsVolume("st1", volumeCount, "500", Optional.<String>absent());
     verifySingleError(EBS_VOLUME_COUNT, INVALID_EBS_VOLUME_COUNT_FORMAT_MSG, volumeCount);
   }
 
   @Test
   public void testValidateEbsVolumeCount_Negative() {
     String volumeCount = "-1";
-    checkEbsVolume("st1", volumeCount, "500", "false", Optional.<String>absent());
+    checkEbsVolume("st1", volumeCount, "500", Optional.<String>absent());
     verifySingleError(EBS_VOLUME_COUNT, INVALID_EBS_VOLUME_COUNT_MSG, MAX_VOLUMES_PER_INSTANCE);
   }
 
   @Test
   public void testValidateEbsVolumeCount_AboveMax() {
     String volumeCount = Integer.toString(MAX_VOLUMES_PER_INSTANCE + 1);
-    checkEbsVolume("st1", volumeCount, "500", "false", Optional.<String>absent());
+    checkEbsVolume("st1", volumeCount, "500", Optional.<String>absent());
     verifySingleError(EBS_VOLUME_COUNT, INVALID_EBS_VOLUME_COUNT_MSG, MAX_VOLUMES_PER_INSTANCE);
   }
 
@@ -787,68 +791,137 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
   public void testValidateEbsVolumeSize_NotNumber() {
     String volumeType = "st1";
     String volumeSize = "not a number";
-    checkEbsVolume(volumeType, "2", volumeSize, "false", Optional.<String>absent());
+    checkEbsVolume(volumeType, "2", volumeSize, Optional.<String>absent());
     verifySingleError(EBS_VOLUME_SIZE_GIB, INVALID_EBS_VOLUME_SIZE_FORMAT_MSG, volumeSize);
   }
 
   @Test
   public void testValidateEbsVolumeSize_BelowMin() {
     String volumeType = "st1";
-
     int minAllowedSize = 500;
     int maxAllowedSize = 16384;
-    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
-    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+
+    setMockEbsMetadata(volumeType, minAllowedSize, maxAllowedSize);
 
     String volumeSize = Integer.toString(minAllowedSize - 1);
-    checkEbsVolume(volumeType, "2", volumeSize, "false", Optional.<String>absent());
+    checkEbsVolume(volumeType, "2", volumeSize, Optional.<String>absent());
     verifySingleError(EBS_VOLUME_SIZE_GIB, VOLUME_SIZE_NOT_IN_RANGE_MSG, volumeType, minAllowedSize, maxAllowedSize);
   }
 
   @Test
   public void testValidateEbsVolumeSize_AboveMax() {
     String volumeType = "st1";
-
     int minAllowedSize = 500;
     int maxAllowedSize = 16384;
-    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
-    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+
+    setMockEbsMetadata(volumeType, minAllowedSize, maxAllowedSize);
 
     String volumeSize = Integer.toString(maxAllowedSize + 1);
-    checkEbsVolume(volumeType, "2", volumeSize, "false", Optional.<String>absent());
+    checkEbsVolume(volumeType, "2", volumeSize, Optional.<String>absent());
     verifySingleError(EBS_VOLUME_SIZE_GIB, VOLUME_SIZE_NOT_IN_RANGE_MSG, volumeType, minAllowedSize, maxAllowedSize);
   }
 
   @Test
   public void testValidateEbsEncryptionFlag_InvalidCount() {
-    checkEbsVolume("st1", "0", "500", "true", Optional.<String>absent());
+    checkEbsVolume("st1", "0", "500", Optional.<String>absent(), "true", Optional.<String>absent());
     verifySingleError(ENCRYPT_ADDITIONAL_EBS_VOLUMES, INVALID_EBS_ENCRYPTION_MSG);
   }
 
   @Test
   public void testValidateEbsKms_InvalidCount() {
-    checkEbsVolume("st1", "0", "500", "false", Optional.of("some-kms-key"));
+    checkEbsVolume("st1", "0", "500", Optional.<String>absent(), "false", Optional.of("some-kms-key"));
     verifySingleError(EBS_KMS_KEY_ID, INVALID_EBS_ENCRYPTION_MSG);
   }
 
   @Test
   public void testValidateEbsKms_KeyNotFound() {
-    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata("st1", 1, 1000);
-    when(ebsMetadata.apply(anyString())).thenReturn(ebsVolumeMetadata);
-
+    setMockEbsMetadata("st1", 1, 1000);
     when(kmsClient.describeKey(any(DescribeKeyRequest.class))).thenThrow(new NotFoundException(""));
 
-    checkEbsVolume("st1", "1", "500", "true", Optional.of("invalid-key"));
+    checkEbsVolume("st1", "1", "500", Optional.<String>absent(), "true", Optional.of("invalid-key"));
     verifySingleError(EBS_KMS_KEY_ID, INVALID_KMS_NOT_FOUND_MESSAGE);
   }
 
+  @Test
+  public void testValidateEbsIOPS_IopsNotRequired() {
+    setMockEbsMetadata("st1", 10, 10000);
+    checkEbsVolume("st1", "1", "500", Optional.of("200"));
+    verifySingleError(EBS_IOPS, IOPS_NOT_PERMITTED_MSG);
+  }
+
+  @Test
+  public void testValidateEbsIOPS_IopsRequired() {
+    setMockEbsMetadata("io1", 10, 10000);
+    checkEbsVolume("io1", "1", "500", Optional.<String>absent());
+    verifySingleError(EBS_IOPS, IOPS_REQUIRED_MSG);
+  }
+
+  @Test
+  public void testValidateEbsIOPS_InvalidFormat() {
+    setMockEbsMetadata("io1", 10, 10000);
+    checkEbsVolume("io1", "1", "500", Optional.of("asdf"));
+    verifySingleError(EBS_IOPS, INVALID_IOPS_FORMAT_MSG);
+  }
+
+  @Test
+  public void testValidateEbsIOPS_IopsAboveMax() {
+    String volumeType = "io1";
+    int minIops = 100;
+    int maxIops = 200;
+
+    setMockEbsMetadata(volumeType, 10, 10000, minIops, maxIops);
+    checkEbsVolume("io1", "1", "500", Optional.of("201"));
+    verifySingleError(EBS_IOPS, IOPS_NOT_IN_RANGE_MSG, 201, volumeType, minIops, maxIops);
+  }
+
+  @Test
+  public void testValidateEbsIOPS_IopsBelowMin() {
+    String volumeType = "io1";
+    int minIops = 100;
+    int maxIops = 200;
+
+    setMockEbsMetadata(volumeType, 10, 10000, minIops, maxIops);
+    checkEbsVolume("io1", "1", "500", Optional.of("99"));
+    verifySingleError(EBS_IOPS, IOPS_NOT_IN_RANGE_MSG, 99, volumeType, minIops, maxIops);
+  }
+
+  @Test
+  public void testValidateEbsIOPS_Valid() {
+    setMockEbsMetadata("io1", 10, 10000, 100, 200);
+    checkEbsVolume("io1", "1", "500", Optional.of("150"));
+    verifyClean();
+  }
+
+  private void setMockEbsMetadata(String volumeType, int minAllowedSize, int maxAllowedSize) {
+    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
+    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+  }
+
+  private void setMockEbsMetadata(String volumeType, int minAllowedSize, int maxAllowedSize,
+                                  int minAllowedIops, int maxAllowedIops) {
+    EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize,
+        minAllowedIops, maxAllowedIops);
+    when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
+  }
+
   protected void checkEbsVolume(String ebsVolumeType, String ebsVolumeCount,
-                                String ebsVolumeSizeGib, String enableEncryption, Optional<String> ebsKmsKeyId) {
+                                String ebsVolumeSizeGib, Optional<String> iopsCount) {
+    checkEbsVolume(ebsVolumeType, ebsVolumeCount, ebsVolumeSizeGib,
+        iopsCount, "false", Optional.<String>absent());
+  }
+
+  protected void checkEbsVolume(String ebsVolumeType, String ebsVolumeCount,
+                                String ebsVolumeSizeGib, Optional<String> iopsCount,
+                                String enableEncryption, Optional<String> ebsKmsKeyId) {
     Map<String, String> configMap = Maps.newHashMap();
     configMap.put(EBS_VOLUME_TYPE.unwrap().getConfigKey(), ebsVolumeType);
     configMap.put(EBS_VOLUME_COUNT.unwrap().getConfigKey(), ebsVolumeCount);
     configMap.put(EBS_VOLUME_SIZE_GIB.unwrap().getConfigKey(), ebsVolumeSizeGib);
     configMap.put(ENCRYPT_ADDITIONAL_EBS_VOLUMES.unwrap().getConfigKey(), enableEncryption);
+
+    if (iopsCount.isPresent()) {
+      configMap.put(EBS_IOPS.unwrap().getConfigKey(), iopsCount.get());
+    }
 
     if (ebsKmsKeyId.isPresent()) {
       configMap.put(EBS_KMS_KEY_ID.unwrap().getConfigKey(), ebsKmsKeyId.get());

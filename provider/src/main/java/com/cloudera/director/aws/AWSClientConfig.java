@@ -17,12 +17,17 @@ package com.cloudera.director.aws;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.amazonaws.ClientConfiguration;
-import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.ChildLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.base.Joiner;
+import com.google.common.collect.Lists;
+
+import java.util.List;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,7 +58,7 @@ public class AWSClientConfig {
    */
   // Fully qualifying class name due to compiler bug
   public static enum AWSClientConfigurationPropertyToken
-      implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+      implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
      * The maximum number of retry attempts for failed retryable requests.
@@ -202,6 +207,31 @@ public class AWSClientConfig {
         .withProxyPassword(httpProxyParameters.getPassword())
         .withProxyDomain(httpProxyParameters.getDomain())
         .withProxyWorkstation(httpProxyParameters.getWorkstation())
-        .withPreemptiveBasicProxyAuth(httpProxyParameters.isPreemptiveBasicProxyAuth());
+        .withPreemptiveBasicProxyAuth(httpProxyParameters.isPreemptiveBasicProxyAuth())
+        .withNonProxyHosts(modifyProxyBypassList(httpProxyParameters.getProxyBypassHosts()));
+  }
+
+  /**
+   * Modify the proxy bypass host list so that it can be used by AWS's client configuration object. The
+   * list will be modified in accordance with the documentation for http.nonProxyHosts on
+   * http://docs.oracle.com/javase/7/docs/api/java/net/doc-files/net-properties.html, which is supported by
+   * the AWS EC2 SDK.
+   *
+   * @param proxyBypassHosts the list of proxyBypassHosts to analyze
+   * @return a modified string of proxy bypass hosts
+   */
+  @VisibleForTesting
+  static String modifyProxyBypassList(List<String> proxyBypassHosts) {
+    List<String> nonProxyHosts = Lists.newArrayListWithCapacity(proxyBypassHosts.size());
+
+    for (String proxyBypassHost : proxyBypassHosts) {
+      if (proxyBypassHost.startsWith(".")) {
+        nonProxyHosts.add("*" + proxyBypassHost);
+      } else {
+        nonProxyHosts.add(proxyBypassHost);
+      }
+    }
+
+    return Joiner.on('|').join(nonProxyHosts);
   }
 }

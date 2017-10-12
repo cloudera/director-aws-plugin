@@ -17,6 +17,7 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_IOPS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
@@ -34,7 +35,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
-import static com.cloudera.director.spi.v1.model.util.Validations.addError;
+import static com.cloudera.director.spi.v2.model.util.Validations.addError;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
@@ -60,12 +61,12 @@ import com.amazonaws.services.kms.model.NotFoundException;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata.EbsVolumeMetadata;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.util.Preconditions;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.util.Preconditions;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Joiner;
 import com.google.common.base.Strings;
@@ -238,6 +239,19 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   @VisibleForTesting
   static final String VOLUME_SIZE_NOT_IN_RANGE_MSG =
       "Volume size for %s must be between %d GiB and %d GiB";
+
+  @VisibleForTesting
+  static final String IOPS_NOT_PERMITTED_MSG = "IOPS should only be set for io1 volume type";
+
+  @VisibleForTesting
+  static final String IOPS_REQUIRED_MSG = "IOPS must be set for io1 volume type";
+
+  @VisibleForTesting
+  static final String INVALID_IOPS_FORMAT_MSG = "IOPS must be a positive integer";
+
+  @VisibleForTesting
+  static final String IOPS_NOT_IN_RANGE_MSG =
+      "IOPS of %d for %s is not in range, it must be between %d and %d";
 
   @VisibleForTesting
   static final String INVALID_EBS_ENCRYPTION_MSG =
@@ -779,17 +793,6 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         }
       }
 
-      String strEbsVolumeSizeGiB = configuration.getConfigurationValue(EBS_VOLUME_SIZE_GIB, localizationContext);
-
-      int ebsVolumeSizeGiB;
-      try {
-        ebsVolumeSizeGiB = Integer.parseInt(strEbsVolumeSizeGiB);
-      } catch (NumberFormatException e) {
-        addError(accumulator, EBS_VOLUME_SIZE_GIB, localizationContext,
-            null, INVALID_EBS_VOLUME_SIZE_FORMAT_MSG, strEbsVolumeSizeGiB);
-        return;
-      }
-
       String volumeType = configuration.getConfigurationValue(EBS_VOLUME_TYPE, localizationContext);
       EbsVolumeMetadata metadata;
 
@@ -803,12 +806,62 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         return;
       }
 
+      String strEbsVolumeSizeGiB = configuration.getConfigurationValue(EBS_VOLUME_SIZE_GIB, localizationContext);
+      int ebsVolumeSizeGiB;
+      try {
+        ebsVolumeSizeGiB = Integer.parseInt(strEbsVolumeSizeGiB);
+      } catch (NumberFormatException e) {
+        addError(accumulator, EBS_VOLUME_SIZE_GIB, localizationContext,
+            null, INVALID_EBS_VOLUME_SIZE_FORMAT_MSG, strEbsVolumeSizeGiB);
+        return;
+      }
+
       int minAllowableSize = metadata.getMinSizeGiB();
       int maxAllowableSize = metadata.getMaxSizeGiB();
 
       if (ebsVolumeSizeGiB > maxAllowableSize || ebsVolumeSizeGiB < minAllowableSize) {
         addError(accumulator, EBS_VOLUME_SIZE_GIB, localizationContext,
             null, VOLUME_SIZE_NOT_IN_RANGE_MSG, volumeType, minAllowableSize, maxAllowableSize);
+      }
+
+      checkeEbsIops(accumulator, localizationContext, configuration, metadata);
+    }
+  }
+
+  private void checkeEbsIops(PluginExceptionConditionAccumulator accumulator,
+                             LocalizationContext localizationContext, Configured configuration,
+                             EbsVolumeMetadata metadata) {
+
+    String volumeType = configuration.getConfigurationValue(EBS_VOLUME_TYPE, localizationContext);
+    String strEbsIops = configuration.getConfigurationValue(EBS_IOPS, localizationContext);
+
+    if (!volumeType.equals("io1")) {
+      if (strEbsIops != null) {
+        addError(accumulator, EBS_IOPS, localizationContext, null, IOPS_NOT_PERMITTED_MSG);
+      }
+      return;
+    }
+
+    if (strEbsIops == null) {
+      addError(accumulator, EBS_IOPS, localizationContext, null, IOPS_REQUIRED_MSG);
+      return;
+    }
+
+    int ebsIopsCount;
+    try {
+      ebsIopsCount = Integer.parseInt(strEbsIops);
+    } catch (NumberFormatException e) {
+      addError(accumulator, EBS_IOPS, localizationContext, null, INVALID_IOPS_FORMAT_MSG);
+      return;
+    }
+
+    if (metadata.getMinIops().isPresent() && metadata.getMaxIops().isPresent()) {
+      int minAllowableIops = metadata.getMinIops().get();
+      int maxAllowableIops = metadata.getMaxIops().get();
+
+      if (ebsIopsCount > maxAllowableIops || ebsIopsCount < minAllowableIops) {
+        addError(accumulator, EBS_IOPS, localizationContext,
+            null, IOPS_NOT_IN_RANGE_MSG, ebsIopsCount, volumeType, minAllowableIops, maxAllowableIops);
       }
     }
   }

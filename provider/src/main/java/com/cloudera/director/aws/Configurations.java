@@ -40,6 +40,11 @@ public final class Configurations {
   public static final String EPHEMERAL_DEVICE_MAPPINGS_SECTION = "ephemeralDeviceMappings";
 
   /**
+   * The HOCON path prefix for EBS device mapping configuration.
+   */
+  public static final String EBS_DEVICE_MAPPINGS_SECTION = "ebsDeviceMappings";
+
+  /**
    * The HOCON path prefix for virtualization mapping configuration.
    */
   public static final String VIRTUALIZATION_MAPPINGS_SECTION = "virtualizationMappings";

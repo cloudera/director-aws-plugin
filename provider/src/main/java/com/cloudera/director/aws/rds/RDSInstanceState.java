@@ -14,8 +14,8 @@
 
 package com.cloudera.director.aws.rds;
 
-import com.cloudera.director.spi.v1.model.InstanceStatus;
-import com.cloudera.director.spi.v1.model.util.AbstractInstanceState;
+import com.cloudera.director.spi.v2.model.InstanceStatus;
+import com.cloudera.director.spi.v2.model.util.AbstractInstanceState;
 import com.google.common.collect.Maps;
 
 import java.util.Collections;

@@ -1,0 +1,96 @@
+#!/bin/sh
+
+# Copyright (c) 2017 Cloudera, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Unmounts the ephemeral volumes and removes them from fstab. This allows the
+# ephemeral storage to be prepared properly by the rest of the script and used by
+# Cloudera Manager.
+unmount_ephemeral_volumes_and_update_fstab()
+{
+  umount /mnt
+  umount /media/ephemeral0
+  cat /etc/fstab | grep -v "/mnt" | grep -v "/media/ephemeral0" > /tmp/fstab.new
+  mv /tmp/fstab.new /etc/fstab
+}
+
+# Format and mount all unmounted volumes on cloud nodes in parallel.
+# Volumes will be mounted as /data0, /data1, ... /data[n-1],
+# where n is the number of unmounted volumes.
+# The larger cloud instance types have a large amount
+# of AVAILABLE storage, but only a fraction of it is
+# actually formatted and mounted at instance creation time.
+prepare_unmounted_volumes()
+{
+  ALL_DISKS=$(lsblk --noheadings --raw -o NAME,TYPE | awk '$2 == "disk"'  | awk '{ print $1 }')
+
+  # Go through each disk and mount them, will ignore disks that already have
+  # a mount point or have partitions with mount points
+  COUNTER=0
+  for device_name in $ALL_DISKS; do
+    RESULT=$(lsblk --noheadings --raw -o NAME,TYPE,MOUNTPOINT /dev/$device_name)
+    # a "/" from this lsblk result indicates it's mounted or has a mounted partition
+    if [[ ${RESULT} != *"/"* ]]; then
+      prepare_disk "/data$COUNTER" "/dev/$device_name" &
+      COUNTER=$(($COUNTER+1))
+    fi
+  done
+
+  wait # for all the background prepare_disk function calls to complete
+}
+
+# This function was lifted from the file prepare_all_disks.sh in the Whirr project
+# It's safe to invoke this function in parallel with different arguments because
+# the append operation is atomic when the size of the appended string is <1KB. See:
+# http://www.notthewizard.com/2014/06/17/are-files-appends-really-atomic/
+prepare_disk()
+{
+  mount=$1
+  device=$2
+
+  FS=ext4
+  FS_OPTS="-E lazy_itable_init=1"
+
+  which mkfs.$FS
+  # Fall back to ext3
+  if [[ $? -ne 0 ]]; then
+    FS=ext3
+    FS_OPTS=""
+  fi
+
+  # is device mounted?
+  mount | grep -q "${device}"
+  if [ $? == 0 ]; then
+    echo "$device is mounted"
+    if [ ! -d $mount ]; then
+      echo "Symlinking to $mount"
+      ln -s $(grep "${device}" /proc/mounts | awk '{print $2}') "${mount}"
+    fi
+  else
+
+    echo "Warning: ERASING CONTENTS OF $device"
+    mkfs.$FS -F $FS_OPTS $device -m 0
+
+    echo "Mounting $device on $mount"
+    if [ ! -e "${mount}" ]; then
+      mkdir "${mount}"
+    fi
+
+    mount -o defaults,noatime "${device}" "${mount}"
+    echo "$device $mount $FS defaults,noatime 0 0" >> /etc/fstab
+  fi
+}
+
+unmount_ephemeral_volumes_and_update_fstab
+prepare_unmounted_volumes

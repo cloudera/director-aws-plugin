@@ -36,17 +36,17 @@ import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTempl
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.SKIP_FINAL_SNAPSHOT;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.STORAGE_ENCRYPTED;
 import static com.cloudera.director.aws.rds.RDSInstanceTemplate.RDSInstanceTemplateConfigurationPropertyToken.VPC_SECURITY_GROUP_IDS;
-import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_PASSWORD;
-import static com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_USERNAME;
+import static com.cloudera.director.spi.v2.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_PASSWORD;
+import static com.cloudera.director.spi.v2.database.DatabaseServerInstanceTemplate.DatabaseServerInstanceTemplateConfigurationPropertyToken.ADMIN_USERNAME;
 
-import com.cloudera.director.spi.v1.database.DatabaseServerInstanceTemplate;
-import com.cloudera.director.spi.v1.database.DatabaseType;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.Property;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
-import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.cloudera.director.spi.v2.database.DatabaseServerInstanceTemplate;
+import com.cloudera.director.spi.v2.database.DatabaseType;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.Property;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
 
@@ -90,7 +90,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    */
   // Fully qualifying class name due to compiler bug
   public enum RDSInstanceTemplateConfigurationPropertyToken
-      implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+      implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
      * The amount of storage (in gigabytes) to be initially allocated for the database instance.
@@ -847,7 +847,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    * @return the optional integer value of the specified configuration property
    */
   protected Optional<Integer> getOptionalIntegerConfigurationParameterValue(
-      com.cloudera.director.spi.v1.model.ConfigurationPropertyToken configurationPropertyToken,
+      com.cloudera.director.spi.v2.model.ConfigurationPropertyToken configurationPropertyToken,
       LocalizationContext localizationContext) {
     String stringConfigurationValue =
         getConfigurationValue(configurationPropertyToken, localizationContext);
@@ -864,7 +864,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    * @return the optional boolean value of the specified configuration property
    */
   protected Optional<Boolean> getOptionalBooleanConfigurationValue(
-      com.cloudera.director.spi.v1.model.ConfigurationPropertyToken configurationPropertyToken,
+      com.cloudera.director.spi.v2.model.ConfigurationPropertyToken configurationPropertyToken,
       LocalizationContext localizationContext) {
     String stringConfigurationValue =
         getConfigurationValue(configurationPropertyToken, localizationContext);
@@ -881,7 +881,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    * @return the optional string list value of the specified configuration property
    */
   protected Optional<List<String>> getOptionalListConfigurationParameterValue(
-      com.cloudera.director.spi.v1.model.ConfigurationPropertyToken configurationPropertyToken,
+      com.cloudera.director.spi.v2.model.ConfigurationPropertyToken configurationPropertyToken,
       LocalizationContext localizationContext) {
     String stringConfigurationValue =
         getConfigurationValue(configurationPropertyToken, localizationContext);
@@ -897,7 +897,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
    * @return the optional string list value of the specified configuration property
    */
   private Optional<String> getOptionalConfigurationValue(
-      com.cloudera.director.spi.v1.model.ConfigurationPropertyToken configurationPropertyToken,
+      com.cloudera.director.spi.v2.model.ConfigurationPropertyToken configurationPropertyToken,
       LocalizationContext localizationContext) {
     return Optional.fromNullable(getConfigurationValue(configurationPropertyToken,
         localizationContext));

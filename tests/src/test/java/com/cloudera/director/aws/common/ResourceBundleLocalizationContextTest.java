@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 
 import com.cloudera.director.aws.common.ResourceBundleLocalizationContext.ResourceBundleLocalizationContextFactory;
 import com.cloudera.director.aws.common.ResourceBundleLocalizationContext.ResourceBundleResolver;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.google.common.collect.Maps;
 
 import java.util.Enumeration;

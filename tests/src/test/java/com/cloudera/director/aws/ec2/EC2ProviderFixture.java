@@ -10,6 +10,7 @@ import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.cloudera.director.aws.shaded.com.google.common.base.Optional;
 import com.cloudera.director.aws.AWSFilters;
@@ -20,10 +21,10 @@ import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.util.DefaultLocalizationContext;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.util.DefaultLocalizationContext;
 
 import java.util.Locale;
 
@@ -31,6 +32,7 @@ public class EC2ProviderFixture {
 
   private Configured configured;
   private EphemeralDeviceMappings edMappings;
+  private EBSDeviceMappings ebsMappings;
   private EBSMetadata ebsMetadata;
   private VirtualizationMappings vMappings;
   private AWSFilters filters;
@@ -50,6 +52,7 @@ public class EC2ProviderFixture {
   public EC2ProviderFixture() {
     configured = mock(Configured.class);
     edMappings = mock(EphemeralDeviceMappings.class);
+    ebsMappings = mock(EBSDeviceMappings.class);
     ebsMetadata = mock(EBSMetadata.class);
     vMappings = mock(VirtualizationMappings.class);
     filters = mock(AWSFilters.class);
@@ -92,7 +95,7 @@ public class EC2ProviderFixture {
       when(configured.getConfigurationValue(eq(KEY_NAME_PREFIX), any(LocalizationContext.class)))
           .thenReturn(keyNamePrefix);
     }
-    return new EC2Provider(configured, edMappings, ebsMetadata, vMappings,
+    return new EC2Provider(configured, edMappings, ebsMappings, ebsMetadata, vMappings,
                            filters, timeouts, tagMappings, networkRules,
                            ec2ClientProvider, iamClientProvider, kmsClientProvider,
                            localizationContext);

@@ -26,9 +26,9 @@ import com.amazonaws.services.rds.model.AmazonRDSException;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.rds.RDSEndpoints;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

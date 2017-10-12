@@ -2,7 +2,7 @@
 
 package com.cloudera.director.aws.rds;
 
-import com.cloudera.director.spi.v1.database.DatabaseType;
+import com.cloudera.director.spi.v2.database.DatabaseType;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableListMultimap;
 import com.google.common.collect.ImmutableMap;

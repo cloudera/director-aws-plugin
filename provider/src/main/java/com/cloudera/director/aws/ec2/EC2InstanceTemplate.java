@@ -16,6 +16,7 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_IOPS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_OPTIMIZED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
@@ -36,13 +37,13 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 
-import com.cloudera.director.spi.v1.compute.ComputeInstanceTemplate;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.Property;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
-import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.Property;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
@@ -87,7 +88,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   // Fully qualifying class name due to compiler bug
   public static enum EC2InstanceTemplateConfigurationPropertyToken
-      implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+      implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
      * <p>The availability zone.</p>
@@ -157,14 +158,27 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     EBS_VOLUME_TYPE(new SimpleConfigurationPropertyBuilder()
       .configKey("ebsVolumeType")
       .name("EBS Volume Type")
-      .addValidValues("st1", "sc1", "gp2")
+      .addValidValues("st1", "sc1", "gp2", "io1")
       .defaultValue("st1")
       .defaultDescription(
         "The EBS volume type for the additional EBS volumes. Supported volumes are Throughput Optimized HDD (st1), " +
-          "Cold HDD (sc1) and General Purpose SSD (gp2) <br />" +
+          "Cold HDD (sc1), General Purpose SSD (gp2) and Provisioned IOPS SSD (io1) <br />" +
           "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html'>More Information</a>"
       ).widget(ConfigurationProperty.Widget.OPENLIST)
       .build()),
+
+    /**
+     * The number of I/O operations per second (IOPS) when using io1 volume types.
+     */
+    EBS_IOPS(new SimpleConfigurationPropertyBuilder()
+        .configKey("ebsIops")
+        .name("EBS IOPS Count")
+        .defaultDescription(
+            "Only valid for Provisioned IOPS (io1) SSD volumes. The number of I/O operations per second (IOPS) to " +
+                "provision for the volume."
+        ).widget(ConfigurationProperty.Widget.NUMBER)
+        .type(Property.Type.INTEGER)
+        .build()),
 
     /**
      * Whether to enable ebs encryption of the additional EBS volumes.
@@ -579,6 +593,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final String ebsVolumeType;
 
   /**
+   * The number of I/O operations per second (IOPS) when using io1 volume types.
+   */
+  private final Optional<Integer> ebsIops;
+
+  /**
    * Whether to enable ebs encryption of the additional EBS volumes.
    */
   private final boolean enableEbsEncryption;
@@ -652,6 +671,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     this.ebsVolumeCount = Integer.parseInt(getConfigurationValue(EBS_VOLUME_COUNT, localizationContext));
     this.ebsVolumeSizeGiB = Integer.parseInt(getConfigurationValue(EBS_VOLUME_SIZE_GIB, localizationContext));
     this.ebsVolumeType = getConfigurationValue(EBS_VOLUME_TYPE, localizationContext);
+
+    Optional<String> strEbsIops = Optional.fromNullable(getConfigurationValue(EBS_IOPS, localizationContext));
+    this.ebsIops = strEbsIops.isPresent() ?
+        Optional.of(Integer.parseInt(strEbsIops.get())) : Optional.<Integer>absent();
+
     this.enableEbsEncryption =
         Boolean.parseBoolean(getConfigurationValue(ENCRYPT_ADDITIONAL_EBS_VOLUMES, localizationContext));
     this.ebsKmsKeyId = Optional.fromNullable(getConfigurationValue(EBS_KMS_KEY_ID, localizationContext));
@@ -791,6 +815,15 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   public String getEbsVolumeType() {
     return ebsVolumeType;
+  }
+
+  /**
+   * Returns the number of I/O operations per second (IOPS).
+   *
+   * @return the number of I/O operations per second (IOPS).
+   */
+  public Optional<Integer> getEbsIops() {
+    return ebsIops;
   }
 
   /**

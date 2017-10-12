@@ -19,12 +19,12 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.cloudera.director.aws.common.PropertyResolvers;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.ChildLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 import com.google.common.base.Function;
 import com.google.common.base.Joiner;
 import com.google.common.base.Splitter;
@@ -62,7 +62,7 @@ public class VirtualizationMappings implements Function<String, List<String>> {
      */
     // Fully qualifying class name due to compiler bug
     public static enum VirtualizationMappingsConfigurationPropertyToken
-        implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+        implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
       /**
        * Path for the custom virtualization mappings file. Relative paths are

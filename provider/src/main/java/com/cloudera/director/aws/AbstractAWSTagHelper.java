@@ -16,7 +16,7 @@ package com.cloudera.director.aws;
 
 import static com.google.common.base.Preconditions.checkNotNull;
 
-import com.cloudera.director.spi.v1.model.InstanceTemplate;
+import com.cloudera.director.spi.v2.model.InstanceTemplate;
 import com.google.common.collect.Lists;
 
 import java.util.List;

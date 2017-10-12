@@ -4,9 +4,9 @@ package com.cloudera.director.aws;
 
 import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
-import com.cloudera.director.spi.v1.model.exception.InvalidCredentialsException;
-import com.cloudera.director.spi.v1.model.exception.TransientProviderException;
-import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v2.model.exception.InvalidCredentialsException;
+import com.cloudera.director.spi.v2.model.exception.TransientProviderException;
+import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
 import com.google.common.collect.ImmutableSet;
 
 import java.util.Set;

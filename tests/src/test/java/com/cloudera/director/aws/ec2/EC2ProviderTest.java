@@ -14,7 +14,14 @@
 
 package com.cloudera.director.aws.ec2;
 
-import static com.cloudera.director.spi.v1.provider.Launcher.DEFAULT_PLUGIN_LOCALIZATION_CONTEXT;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SECURITY_GROUP_IDS;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
+import static com.cloudera.director.spi.v2.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
+import static com.cloudera.director.spi.v2.provider.Launcher.DEFAULT_PLUGIN_LOCALIZATION_CONTEXT;
 import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Matchers.any;
@@ -28,46 +35,76 @@ import static org.mockito.Mockito.when;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
+import com.cloudera.director.aws.Tags;
 import com.cloudera.director.aws.common.AWSKMSClientProvider;
 import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
-import com.cloudera.director.aws.shaded.com.amazonaws.ClientConfiguration;
-import com.cloudera.director.aws.shaded.com.amazonaws.ClientConfigurationFactory;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.BlockDeviceMapping;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeInstanceStatusRequest;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeInstancesRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeInstancesResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.EbsBlockDevice;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Instance;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceState;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceStateName;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceStatus;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Reservation;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.StateReason;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Tag;
+import com.cloudera.director.aws.shaded.com.google.common.base.Predicate;
 import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigFactory;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.google.common.base.Function;
+import com.cloudera.director.aws.shaded.org.joda.time.DateTime;
+import com.cloudera.director.aws.shaded.org.joda.time.Duration;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
-import com.google.common.collect.Iterables;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
 
 import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.TimeoutException;
 import java.util.logging.Logger;
 
 import org.hamcrest.Description;
 import org.hamcrest.TypeSafeMatcher;
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 public class EC2ProviderTest {
 
   private static final Logger LOG = Logger.getLogger(EC2ProviderTest.class.getName());
+
+  private static void putConfig(Map<String, String> configMap, ConfigurationPropertyToken propertyToken,
+      String value) {
+    if (value != null) {
+      configMap.put(propertyToken.unwrap().getConfigKey(), value);
+    }
+  }
+
+  @Rule
+  public ExpectedException expectedException = ExpectedException.none();
 
   private EC2Provider ec2Provider;
   private AmazonEC2AsyncClient ec2Client;
@@ -87,6 +124,11 @@ public class EC2ProviderTest {
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.medium", 1),
             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
+    // Configure ebs device mappings
+    EBSDeviceMappings ebsDeviceMappings =
+        EBSDeviceMappings.getDefaultInstance(ImmutableMap.<String, String>of(),
+            DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
     // Configure ebs metadata
     EBSMetadata ebsMetadata =
         EBSMetadata.getDefaultInstance(ImmutableMap.of("st1", "500-16384"),
@@ -101,7 +143,6 @@ public class EC2ProviderTest {
     AWSFilters awsFilters = AWSFilters.EMPTY_FILTERS;
     AWSTimeouts awsTimeouts = new AWSTimeouts(null);
     CustomTagMappings customTagMappings = new CustomTagMappings(ConfigFactory.empty());
-    ClientConfiguration clientConfiguration = new ClientConfigurationFactory().getConfig();
 
     ec2Client = mock(AmazonEC2AsyncClient.class);
     AmazonEC2ClientProvider ec2ClientProvider = mock(AmazonEC2ClientProvider.class);
@@ -111,6 +152,7 @@ public class EC2ProviderTest {
     ec2Provider = new EC2Provider(
         new SimpleConfiguration(),
         ephemeralDeviceMappings,
+        ebsDeviceMappings,
         ebsMetadata,
         virtualizationMappings,
         awsFilters,
@@ -267,6 +309,294 @@ public class EC2ProviderTest {
     assertThat(handledInstances).containsAll(firstInstances);
     assertThat(handledInstances).containsAll(secondInstances);
     verify(ec2Client).describeInstances(argThat(matchesNextToken("next")));
+  }
+
+  @Test(timeout=1000L)
+  public void testWaitUntilInstanceHasStartedSuccess() throws Exception {
+    String ec2InstanceId = "i-test";
+
+    InstanceStateName instanceStateName = InstanceStateName.Running;
+    DescribeInstanceStatusResult instanceStatusResult = new DescribeInstanceStatusResult()
+        .withInstanceStatuses(new InstanceStatus()
+            .withInstanceId(ec2InstanceId)
+            .withInstanceState(new InstanceState().withName(instanceStateName.toString())));
+    when(ec2Client.describeInstanceStatus(any(DescribeInstanceStatusRequest.class)))
+        .thenReturn(instanceStatusResult);
+
+    boolean result = ec2Provider.waitUntilInstanceHasStarted(ec2InstanceId, DateTime.now().plus(1000L));
+    assertThat(result).isTrue();
+  }
+
+  @Test(timeout=1000L)
+  public void testWaitUntilInstanceHasStartedFailed() throws Exception {
+    String ec2InstanceId = "i-test";
+
+    String failureReason = "failure reason";
+    List<InstanceStateName> failedStates = ImmutableList.of(InstanceStateName.Terminated,
+        InstanceStateName.ShuttingDown);
+    for (InstanceStateName instanceStateName : failedStates) {
+      DescribeInstanceStatusResult instanceStatusResult = new DescribeInstanceStatusResult()
+          .withInstanceStatuses(new InstanceStatus()
+              .withInstanceId(ec2InstanceId)
+              .withInstanceState(new InstanceState().withName(instanceStateName.toString())));
+      when(ec2Client.describeInstanceStatus(any(DescribeInstanceStatusRequest.class)))
+          .thenReturn(instanceStatusResult);
+
+      DescribeInstancesResult failureReasonResult = new DescribeInstancesResult()
+          .withReservations(new Reservation()
+              .withInstances(new Instance()
+                  .withStateReason(new StateReason()
+                .withMessage(failureReason))));
+      when(ec2Client.describeInstances(any(DescribeInstancesRequest.class)))
+          .thenReturn(failureReasonResult);
+
+      boolean result = ec2Provider.waitUntilInstanceHasStarted(ec2InstanceId, DateTime.now().plus(1000L));
+      assertThat(result).isFalse();
+    }
+  }
+
+  @Test(timeout=10000L)
+  public void testWaitUntilInstanceHasStartedTimeout() throws Exception {
+    String ec2InstanceId = "i-test";
+
+    InstanceStateName instanceStateName = InstanceStateName.Pending;
+    DescribeInstanceStatusResult instanceStatusResult = new DescribeInstanceStatusResult()
+        .withInstanceStatuses(new InstanceStatus()
+            .withInstanceId(ec2InstanceId)
+            .withInstanceState(new InstanceState().withName(instanceStateName.toString())));
+    when(ec2Client.describeInstanceStatus(any(DescribeInstanceStatusRequest.class)))
+        .thenReturn(instanceStatusResult);
+
+    expectedException.expect(TimeoutException.class);
+    ec2Provider.waitUntilInstanceHasStarted(ec2InstanceId, DateTime.now().plus(1000L));
+  }
+
+  @Test(timeout=1000L)
+  public void testSpotGroupAllocatorTagSpotInstancesSuccess() throws Exception {
+    Set<String> virtualInstanceIds = ImmutableSet.of("vid1", "vid2");
+    EC2Provider.SpotGroupAllocator spotGroupAllocator = createSpotGroupAllocator(
+        virtualInstanceIds, new Date(), new Date());
+
+    for (String virtualInstanceId : virtualInstanceIds) {
+      EC2Provider.SpotAllocationRecord record = spotGroupAllocator.getSpotAllocationRecord(virtualInstanceId);
+      // set some value for the ec2InstanceId to pretend that the instance was allocated
+      record.ec2InstanceId = virtualInstanceId;
+    }
+
+    // return Pending status so that each instance times out
+    when(ec2Client.describeInstanceStatus(any(DescribeInstanceStatusRequest.class)))
+        .thenAnswer(new Answer<Object>() {
+          @Override
+          public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+            String ec2InstanceId = invocationOnMock
+                .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds().get(0);
+            return new DescribeInstanceStatusResult()
+                .withInstanceStatuses(new InstanceStatus()
+                    .withInstanceId(ec2InstanceId)
+                    .withInstanceState(new InstanceState().withName(InstanceStateName.Running.toString())));
+          }
+        });
+
+    spotGroupAllocator.tagSpotInstances(DateTime.now().plus(1000L));
+    for (String virtualInstanceId : virtualInstanceIds) {
+      EC2Provider.SpotAllocationRecord record = spotGroupAllocator.getSpotAllocationRecord(virtualInstanceId);
+      assertThat(record.instanceTagged).isTrue();
+    }
+  }
+
+  @Test(timeout=5000L)
+  public void testSpotGroupAllocatorTagSpotInstancesFailed() throws Exception {
+    Set<String> virtualInstanceIds = ImmutableSet.of("vid1", "vid2");
+    EC2Provider.SpotGroupAllocator spotGroupAllocator = createSpotGroupAllocator(
+        virtualInstanceIds, new Date(), new Date());
+
+    for (String virtualInstanceId : virtualInstanceIds) {
+      EC2Provider.SpotAllocationRecord record = spotGroupAllocator.getSpotAllocationRecord(virtualInstanceId);
+      // set some value for the ec2InstanceId to pretend that the instance was allocated
+      record.ec2InstanceId = virtualInstanceId;
+    }
+
+    // return Pending status so that each instance times out
+    when(ec2Client.describeInstanceStatus(any(DescribeInstanceStatusRequest.class)))
+        .thenAnswer(new Answer<Object>() {
+          @Override
+          public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+            String ec2InstanceId = invocationOnMock
+                .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds().get(0);
+            return new DescribeInstanceStatusResult()
+                .withInstanceStatuses(new InstanceStatus()
+                    .withInstanceId(ec2InstanceId)
+                    .withInstanceState(new InstanceState().withName(InstanceStateName.Terminated.toString())));
+          }
+        });
+
+    spotGroupAllocator.tagSpotInstances(DateTime.now().plus(1000L));
+    for (String virtualInstanceId : virtualInstanceIds) {
+      EC2Provider.SpotAllocationRecord record = spotGroupAllocator.getSpotAllocationRecord(virtualInstanceId);
+      assertThat(record.instanceTagged).isFalse();
+    }
+  }
+
+  @Test(timeout=20000L)
+  public void testSpotGroupAllocatorTagSpotInstancesTimeout() throws Exception {
+    Set<String> virtualInstanceIds = ImmutableSet.of("vid1", "vid2");
+    EC2Provider.SpotGroupAllocator spotGroupAllocator = createSpotGroupAllocator(
+        virtualInstanceIds, new Date(), new Date());
+
+    for (String virtualInstanceId : virtualInstanceIds) {
+      EC2Provider.SpotAllocationRecord record = spotGroupAllocator.getSpotAllocationRecord(virtualInstanceId);
+      // set some value for the ec2InstanceId to pretend that the instance was allocated
+      record.ec2InstanceId = virtualInstanceId;
+    }
+
+    // return Pending status so that each instance times out
+    when(ec2Client.describeInstanceStatus(any(DescribeInstanceStatusRequest.class)))
+        .thenAnswer(new Answer<Object>() {
+          @Override
+          public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
+            String ec2InstanceId = invocationOnMock
+                .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds().get(0);
+            return new DescribeInstanceStatusResult()
+                .withInstanceStatuses(new InstanceStatus()
+                    .withInstanceId(ec2InstanceId)
+                    .withInstanceState(new InstanceState().withName(InstanceStateName.Pending.toString())));
+          }
+        });
+
+    spotGroupAllocator.tagSpotInstances(DateTime.now().plus(1000L));
+
+    for (String virtualInstanceId : virtualInstanceIds) {
+      EC2Provider.SpotAllocationRecord record = spotGroupAllocator.getSpotAllocationRecord(virtualInstanceId);
+      assertThat(record.instanceTagged).isFalse();
+    }
+  }
+
+  @Test
+  public void testFind() throws Exception {
+    Instance instance1 = new Instance()
+        .withInstanceId("id1")
+        .withTags(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), "vid1"))
+        .withState(new InstanceState().withName(InstanceStateName.Pending));
+    Instance instance1p = new Instance()
+        .withInstanceId("id1")
+        .withTags(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), "vid1"))
+        .withState(new InstanceState().withName(InstanceStateName.Running));
+    Instance instance2 = new Instance()
+        .withInstanceId("id2")
+        .withTags(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), "vid2"))
+        .withState(new InstanceState().withName(InstanceStateName.Pending));
+    Map<String, Instance> vidToIds = Maps.newHashMap();
+    vidToIds.put("vid1", instance1p);
+
+    when(ec2Client.describeInstances(any(DescribeInstancesRequest.class)))
+        .thenReturn(
+            new DescribeInstancesResult().withReservations(new Reservation()))
+        .thenReturn(
+            new DescribeInstancesResult().withReservations(new Reservation().withInstances(instance1, instance2)))
+        .thenReturn(
+            new DescribeInstancesResult().withReservations(new Reservation().withInstances(instance1p, instance2)));
+
+    List<Map.Entry<String, Instance>> vidToInstances = Lists.newArrayList(ec2Provider.doFind(
+        vidToIds.keySet(),
+        null,
+        new Predicate<Instance>() {
+          @Override
+          public boolean apply(Instance instance) {
+            boolean result = InstanceStateName.Running.toString().equals(instance.getState().getName());
+            return result;
+          }
+        },
+        Duration.millis(3000l)));
+
+    assertThat(vidToInstances.size()).isEqualTo(vidToIds.size());
+
+    for (Map.Entry<String, Instance> vidToInstance : vidToInstances) {
+      assertThat(vidToIds.containsKey(vidToInstance.getKey())).isTrue();
+      assertThat(Objects.equals(vidToInstance.getValue(), vidToIds.get(vidToInstance.getKey()))).isTrue();
+    }
+  }
+
+  @Test
+  public void testFindNoWait() throws Exception {
+    Instance instance1 = new Instance()
+        .withInstanceId("id1")
+        .withTags(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), "vid1"))
+        .withState(new InstanceState().withName(InstanceStateName.Pending));
+    Instance instance1p = new Instance()
+        .withInstanceId("id1")
+        .withTags(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), "vid1"))
+        .withState(new InstanceState().withName(InstanceStateName.Running));
+    Instance instance2 = new Instance()
+        .withInstanceId("id2")
+        .withTags(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), "vid2"))
+        .withState(new InstanceState().withName(InstanceStateName.Pending));
+    Map<String, Instance> vidToIds = Maps.newHashMap();
+
+    when(ec2Client.describeInstances(any(DescribeInstancesRequest.class)))
+        .thenReturn(
+            new DescribeInstancesResult().withReservations(new Reservation()))
+        .thenReturn(
+            new DescribeInstancesResult().withReservations(new Reservation().withInstances(instance1, instance2)))
+        .thenReturn(
+            new DescribeInstancesResult().withReservations(new Reservation().withInstances(instance1p, instance2)));
+
+    List<Map.Entry<String, Instance>> vidToInstances = Lists.newArrayList(ec2Provider.doFind(
+        vidToIds.keySet(),
+        null,
+        new Predicate<Instance>() {
+          @Override
+          public boolean apply(Instance instance) {
+            boolean result = InstanceStateName.Running.toString().equals(instance.getState().getName());
+            return result;
+          }
+        },
+        Duration.ZERO));
+
+    assertThat(vidToInstances.isEmpty()).isTrue();
+  }
+
+  @Test
+  public void testFindEmpty() throws Exception {
+    List<Map.Entry<String, Instance>> vidToInstances = Lists.newArrayList(ec2Provider.doFind(
+        Collections.<String>emptyList(),
+        null,
+        new Predicate<Instance>() {
+          @Override
+          public boolean apply(Instance instance) {
+            return InstanceStateName.Running.name().equals(instance.getState().getName());
+          }
+        },
+        Duration.millis(5000l)));
+    assertThat(vidToInstances.isEmpty()).isTrue();
+  }
+
+  @Test
+  public void testDeleteEmpty() throws Exception {
+    ec2Provider.delete(null, Collections.EMPTY_LIST);
+  }
+
+  public EC2Provider.SpotGroupAllocator createSpotGroupAllocator(
+      Collection<String> virtualInstanceIds, Date requestExpirationTime, Date priceChangeDeadline) {
+    return ec2Provider.createSpotGroupAllocator(createEC2InstanceTemplate(), virtualInstanceIds, 0,
+        requestExpirationTime, priceChangeDeadline);
+  }
+
+  public EC2InstanceTemplate createEC2InstanceTemplate() {
+    Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<>();
+    String templateName = "test-template";
+    putConfig(instanceTemplateConfigMap, INSTANCE_NAME_PREFIX, templateName);
+    putConfig(instanceTemplateConfigMap, IMAGE, "ami-test");
+    putConfig(instanceTemplateConfigMap, SECURITY_GROUP_IDS, "sg-test");
+    putConfig(instanceTemplateConfigMap, SUBNET_ID, "sb-test");
+    putConfig(instanceTemplateConfigMap, TYPE, "m3.medium");
+    putConfig(instanceTemplateConfigMap, USE_SPOT_INSTANCES, "true");
+    putConfig(instanceTemplateConfigMap, SPOT_BID_USD_PER_HR, "0.1");
+
+    Map<String, String> instanceTemplateTags = new LinkedHashMap<>();
+    instanceTemplateTags.put(Tags.InstanceTags.OWNER.getTagKey(), "test-user");
+
+    return ec2Provider.createResourceTemplate(
+        templateName, new SimpleConfiguration(instanceTemplateConfigMap), instanceTemplateTags);
   }
 
   public static DescribeInstancesRequestTokenMatcher matchesNextToken(String nextToken) {

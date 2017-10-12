@@ -16,6 +16,7 @@ package com.cloudera.director.aws;
 
 import static com.cloudera.director.aws.AWSClientConfig.AWSClientConfigurationPropertyToken;
 import static com.cloudera.director.aws.ec2.EphemeralDeviceMappings.EphemeralDeviceMappingsConfigProperties.EphemeralDeviceMappingsConfigurationPropertyToken;
+import static com.cloudera.director.aws.ec2.DeviceMappingsConfigProperties.DeviceMappingsConfigurationPropertyToken;
 import static com.cloudera.director.aws.ec2.VirtualizationMappings.VirtualizationMappingsConfigProperties.VirtualizationMappingsConfigurationPropertyToken;
 import static com.cloudera.director.aws.rds.RDSEndpoints.RDSEndpointsConfigProperties.RDSEndpointsConfigurationPropertyToken;
 
@@ -23,20 +24,22 @@ import com.cloudera.director.aws.common.ConfigFragmentWrapper;
 import com.cloudera.director.aws.common.ResourceBundleLocalizationContext;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
-import com.cloudera.director.spi.v1.common.http.HttpProxyParameters;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.provider.CloudProvider;
-import com.cloudera.director.spi.v1.provider.CloudProviderMetadata;
-import com.cloudera.director.spi.v1.provider.util.AbstractLauncher;
-import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.provider.CloudProvider;
+import com.cloudera.director.spi.v2.provider.CloudProviderMetadata;
+import com.cloudera.director.spi.v2.provider.util.AbstractLauncher;
+import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.ObjectArrays;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
 import com.typesafe.config.ConfigParseOptions;
@@ -50,6 +53,7 @@ import java.util.Locale;
 /**
  * AWS plugin launcher.
  */
+@SuppressWarnings("PMD.TooManyStaticImports")
 public class AWSLauncher extends AbstractLauncher {
 
   /**
@@ -70,8 +74,28 @@ public class AWSLauncher extends AbstractLauncher {
       File configurationDirectory, LocalizationContext cloudLocalizationContext) {
     return new EphemeralDeviceMappings(getConfiguration(config,
         Configurations.EPHEMERAL_DEVICE_MAPPINGS_SECTION,
-        EphemeralDeviceMappingsConfigurationPropertyToken.values()),
+        getEphemeralConfigurationPropertyTokens()),
         configurationDirectory, cloudLocalizationContext);
+  }
+
+  /**
+   * Creates EBS device mappings with the specified parameters.
+   *
+   * @param config                   the configuration
+   * @param cloudLocalizationContext the parent cloud localization context
+   * @return the ephemeral device mappings
+   */
+  private static EBSDeviceMappings getEbsDeviceMappings(Config config, LocalizationContext cloudLocalizationContext) {
+    return new EBSDeviceMappings(getConfiguration(config,
+        Configurations.EBS_DEVICE_MAPPINGS_SECTION,
+        DeviceMappingsConfigurationPropertyToken.values()),
+        cloudLocalizationContext);
+  }
+
+  private static ConfigurationPropertyToken[] getEphemeralConfigurationPropertyTokens() {
+    ConfigurationPropertyToken[] ephemeralTokens =  EphemeralDeviceMappingsConfigurationPropertyToken.values();
+    ConfigurationPropertyToken[] deviceMappingTokens = DeviceMappingsConfigurationPropertyToken.values();
+    return ObjectArrays.concat(ephemeralTokens, deviceMappingTokens, ConfigurationPropertyToken.class);
   }
 
   /**
@@ -197,6 +221,9 @@ public class AWSLauncher extends AbstractLauncher {
   protected EphemeralDeviceMappings ephemeralDeviceMappings;
 
   @VisibleForTesting
+  protected EBSDeviceMappings ebsDeviceMappings;
+
+  @VisibleForTesting
   protected EBSMetadata ebsMetadata;
 
   @VisibleForTesting
@@ -245,6 +272,7 @@ public class AWSLauncher extends AbstractLauncher {
     // we want their localization contexts to be nested inside the cloud provider context.
     LocalizationContext cloudLocalizationContext =
         AWSProvider.METADATA.getLocalizationContext(rootLocalizationContext);
+    ebsDeviceMappings = getEbsDeviceMappings(config, cloudLocalizationContext);
     ephemeralDeviceMappings = getEphemeralDeviceMappings(config, configurationDirectory,
         cloudLocalizationContext);
     ebsMetadata = getEBSMetadata(config, configurationDirectory, cloudLocalizationContext);
@@ -283,7 +311,7 @@ public class AWSLauncher extends AbstractLauncher {
     if (!AWSProvider.METADATA.getId().equals(cloudProviderId)) {
       throw new IllegalArgumentException("Invalid cloud provider: " + cloudProviderId);
     }
-    return new AWSProvider(configuration, ephemeralDeviceMappings, ebsMetadata,
+    return new AWSProvider(configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig,
         awsFilters, awsTimeouts, customTagMappings, networkRules, getLocalizationContext(locale));
   }

@@ -2,8 +2,8 @@
 
 package com.cloudera.director.aws.common;
 
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.AbstractLocalizationContext;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.AbstractLocalizationContext;
 import com.google.common.annotations.VisibleForTesting;
 
 import java.util.Locale;

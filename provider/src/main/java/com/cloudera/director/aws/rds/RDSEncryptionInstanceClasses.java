@@ -17,12 +17,12 @@ package com.cloudera.director.aws.rds;
 import static com.google.common.base.Preconditions.checkArgument;
 
 import com.cloudera.director.aws.common.PropertyResolvers;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.ChildLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.collect.Maps;
@@ -52,7 +52,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
    * RDS encryption instance classes configuration properties.
    */
   public static enum ConfigurationPropertyToken
-      implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+      implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
      * Path for the custom RDS encryption instance classes file. Relative

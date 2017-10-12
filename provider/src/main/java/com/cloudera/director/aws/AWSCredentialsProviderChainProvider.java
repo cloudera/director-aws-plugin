@@ -26,14 +26,14 @@ import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.auth.BasicSessionCredentials;
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
 import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
-import com.cloudera.director.spi.v1.provider.CredentialsProvider;
-import com.cloudera.director.spi.v1.provider.CredentialsProviderMetadata;
-import com.cloudera.director.spi.v1.provider.util.SimpleCredentialsProviderMetadata;
-import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.provider.CredentialsProvider;
+import com.cloudera.director.spi.v2.provider.CredentialsProviderMetadata;
+import com.cloudera.director.spi.v2.provider.util.SimpleCredentialsProviderMetadata;
+import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
 
 import java.text.DateFormat;
@@ -78,7 +78,7 @@ public class AWSCredentialsProviderChainProvider
    */
   // Fully qualifying class names due to compiler bug
   public static class AWSConfigCredentialsProviderProvider
-      extends com.cloudera.director.spi.v1.model.util.AbstractConfigured {
+      extends com.cloudera.director.spi.v2.model.util.AbstractConfigured {
 
     /**
      * The list of configuration properties (including inherited properties).
@@ -101,7 +101,7 @@ public class AWSCredentialsProviderChainProvider
      */
     // Fully qualifying class name due to compiler bug
     public enum AWSConfigCredentialsProviderConfigurationPropertyToken
-        implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+        implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
       /**
        * An alphanumeric text string that uniquely identifies the user who
@@ -329,7 +329,7 @@ public class AWSCredentialsProviderChainProvider
      *                                  required
      */
     private Optional<String> getOptionalConfigurationValue(
-        com.cloudera.director.spi.v1.model.ConfigurationPropertyToken token,
+        com.cloudera.director.spi.v2.model.ConfigurationPropertyToken token,
         LocalizationContext localizationContext) {
       return Optional.fromNullable(getConfigurationValue(token.unwrap(), localizationContext));
     }

@@ -19,10 +19,10 @@ import static java.util.Objects.requireNonNull;
 import com.cloudera.director.aws.common.AWSKMSClientProvider;
 import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
 
 /**
  * Validates EC2 provider configuration.

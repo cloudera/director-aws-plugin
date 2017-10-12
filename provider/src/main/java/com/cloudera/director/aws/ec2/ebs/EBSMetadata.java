@@ -18,13 +18,14 @@ import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 
 import com.cloudera.director.aws.common.PropertyResolvers;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.ChildLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 import com.google.common.base.Function;
+import com.google.common.base.Optional;
 import com.google.common.io.Files;
 
 import java.io.File;
@@ -53,11 +54,23 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
     private final String type;
     private final int minSizeGiB;
     private final int maxSizeGiB;
+    private final Optional<Integer> minIops;
+    private final Optional<Integer> maxIops;
 
     public EbsVolumeMetadata(String type, int minSizeGiB, int maxSizeGiB) {
       this.type = Objects.requireNonNull(type, "type is null");
       this.minSizeGiB = minSizeGiB;
       this.maxSizeGiB = maxSizeGiB;
+      this.minIops = Optional.absent();
+      this.maxIops = Optional.absent();
+    }
+
+    public EbsVolumeMetadata(String type, int minSizeGiB, int maxSizeGiB, int minIops, int maxIops) {
+      this.type = Objects.requireNonNull(type, "type is null");
+      this.minSizeGiB = minSizeGiB;
+      this.maxSizeGiB = maxSizeGiB;
+      this.minIops = Optional.of(minIops);
+      this.maxIops = Optional.of(maxIops);
     }
 
     public String getType() {
@@ -72,6 +85,14 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
       return maxSizeGiB;
     }
 
+    public Optional<Integer> getMinIops() {
+      return minIops;
+    }
+
+    public Optional<Integer> getMaxIops() {
+      return maxIops;
+    }
+
     @Override
     public boolean equals(Object o) {
       if (this == o) return true;
@@ -81,8 +102,9 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
 
       if (minSizeGiB != that.minSizeGiB) return false;
       if (maxSizeGiB != that.maxSizeGiB) return false;
-      return type.equals(that.type);
-
+      if (!type.equals(that.type)) return false;
+      if (!minIops.equals(that.minIops)) return false;
+      return maxIops.equals(that.maxIops);
     }
 
     @Override
@@ -90,6 +112,8 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
       int result = type.hashCode();
       result = 31 * result + minSizeGiB;
       result = 31 * result + maxSizeGiB;
+      result = 31 * result + minIops.hashCode();
+      result = 31 * result + maxIops.hashCode();
       return result;
     }
   }
@@ -101,7 +125,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
      */
     // Fully qualifying class name due to compiler bug
     public static enum EBSMetadataConfigurationPropertyToken
-        implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+        implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
       /**
        * Path for the custom EBS metadata file. Relative paths are based on the
@@ -264,42 +288,80 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
    */
   @Override
   public EbsVolumeMetadata apply(String volumeType) {
-    String strEbsMetadata = ebsMetadataResolver.getProperty(volumeType);
-    Objects.requireNonNull(strEbsMetadata, String.format("Could not get metadata for volume type %s", volumeType));
+    String strCapacityRange = ebsMetadataResolver.getProperty(volumeType);
+    Objects.requireNonNull(strCapacityRange, String.format("Could not get metadata for volume type %s", volumeType));
 
-    // strEbsMetadata is expected to be in the form "minSize-maxSize"
-    String[] parts = strEbsMetadata.trim().split("-");
-    checkState(parts.length == 2, String.format("invalid format for %s=%s, expecting " +
-        "exactly 2 parts for the value", volumeType, strEbsMetadata));
+    Range capacityRange = Range.resolveRange(volumeType, strCapacityRange);
+    int minSizeGiB = capacityRange.getMin();
+    int maxSizeGiB = capacityRange.getMax();
 
-    int minSizeGiB, maxSizeGiB;
-    try {
-      minSizeGiB = Integer.parseInt(parts[0]);
-    } catch (NumberFormatException ex) {
-      throw new IllegalStateException(
-          String.format("invalid format for %s=%s, %s should be an integer", volumeType, strEbsMetadata, parts[0])
-      );
+    if (volumeType.equals("io1")) {
+      String key = "io1-iops";
+      String strIopsMetadata = ebsMetadataResolver.getProperty(key);
+      Objects.requireNonNull(strIopsMetadata, String.format("Could not get metadata for %s", key));
+
+      Range iopsRange = Range.resolveRange(key, strIopsMetadata);
+      return new EbsVolumeMetadata(volumeType, minSizeGiB, maxSizeGiB, iopsRange.getMin(), iopsRange.getMax());
     }
-
-    try {
-      maxSizeGiB = Integer.parseInt(parts[1]);
-    } catch (NumberFormatException ex) {
-      throw new IllegalStateException(
-          String.format("invalid format for %s=%s, %s should be an integer", volumeType, strEbsMetadata, parts[1])
-      );
-    }
-
-    checkState(minSizeGiB > 0, String.format("invalid format for %s=%s, %d should " +
-        "be a positive integer", volumeType, strEbsMetadata, minSizeGiB));
-
-    checkState(maxSizeGiB > 0, String.format("invalid format for %s=%s, %d should " +
-        "be a positive integer", volumeType, strEbsMetadata, maxSizeGiB));
-
-    checkState(maxSizeGiB >= minSizeGiB, String.format("invalid format for %s=%s, maximum size %d should " +
-        "be greater than or equal to minimum size %d", volumeType, strEbsMetadata, maxSizeGiB, minSizeGiB));
 
     return new EbsVolumeMetadata(volumeType, minSizeGiB, maxSizeGiB);
   }
+
+  private static class Range {
+    private int min;
+    private int max;
+
+    private Range(int min, int max) {
+      this.min = min;
+      this.max = max;
+    }
+
+    public int getMin() {
+      return min;
+    }
+
+    public int getMax() {
+      return max;
+    }
+
+    static Range resolveRange(String key, String rangeStr) {
+
+      // range string is expected to be in the form "minValue-maxValue"
+
+      String[] parts = rangeStr.trim().split("-");
+      checkState(parts.length == 2, String.format("invalid format for %s=%s, expecting " +
+          "exactly 2 parts for the value", key, rangeStr));
+
+      int min, max;
+      try {
+        min = Integer.parseInt(parts[0]);
+      } catch (NumberFormatException ex) {
+        throw new IllegalStateException(
+            String.format("invalid format for %s=%s, %s should be an integer", key, rangeStr, parts[0])
+        );
+      }
+
+      try {
+        max = Integer.parseInt(parts[1]);
+      } catch (NumberFormatException ex) {
+        throw new IllegalStateException(
+            String.format("invalid format for %s=%s, %s should be an integer", key, rangeStr, parts[1])
+        );
+      }
+
+      checkState(min > 0, String.format("invalid format for %s=%s, %d should " +
+          "be a positive integer", key, rangeStr, min));
+
+      checkState(max > 0, String.format("invalid format for %s=%s, %d should " +
+          "be a positive integer", key, rangeStr, max));
+
+      checkState(max >= min, String.format("invalid format for %s=%s, maximum size %d should " +
+          "be greater than or equal to minimum size %d", key, rangeStr, max, min));
+
+      return new Range(min, max);
+    }
+  }
+
 
   /**
    * Gets an instance of this class that uses only the given ebs metadata.

@@ -3,7 +3,7 @@
 package com.cloudera.director.aws;
 
 import com.cloudera.director.aws.common.HoconConfigUtils;
-import com.cloudera.director.spi.v1.util.Preconditions;
+import com.cloudera.director.spi.v2.util.Preconditions;
 import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableMap;
 import com.typesafe.config.Config;

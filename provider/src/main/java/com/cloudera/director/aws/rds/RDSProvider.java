@@ -29,21 +29,21 @@ import com.amazonaws.services.rds.model.Tag;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
 import com.cloudera.director.aws.common.AmazonRDSClientProvider;
-import com.cloudera.director.spi.v1.database.DatabaseServerProviderMetadata;
-import com.cloudera.director.spi.v1.database.util.AbstractDatabaseServerProvider;
-import com.cloudera.director.spi.v1.database.util.SimpleDatabaseServerProviderMetadata;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.InstanceState;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.Resource;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionDetails;
-import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
-import com.cloudera.director.spi.v1.model.util.CompositeConfigurationValidator;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
-import com.cloudera.director.spi.v1.util.ConfigurationPropertiesUtil;
+import com.cloudera.director.spi.v2.database.DatabaseServerProviderMetadata;
+import com.cloudera.director.spi.v2.database.util.AbstractDatabaseServerProvider;
+import com.cloudera.director.spi.v2.database.util.SimpleDatabaseServerProviderMetadata;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.InstanceState;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.Resource;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionDetails;
+import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v2.model.util.CompositeConfigurationValidator;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 
@@ -96,7 +96,7 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
    */
   // Fully qualifying class name due to compiler bug
   public static enum RDSProviderConfigurationPropertyToken
-      implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
+      implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
      * Whether to associate a public IP address with instances. Default is <code>false</code>,
@@ -257,15 +257,17 @@ public class RDSProvider extends AbstractDatabaseServerProvider<RDSInstance, RDS
   }
 
   @Override
-  public void allocate(RDSInstanceTemplate template, Collection<String> virtualInstanceIds,
+  public Collection<RDSInstance> allocate(RDSInstanceTemplate template, Collection<String> virtualInstanceIds,
       int minCount) throws InterruptedException {
     int instanceCount = virtualInstanceIds.size();
 
     LOG.info(">> Requesting {} instances for {}", instanceCount, template);
+    List<RDSInstance> rdsInstances = Lists.newArrayListWithCapacity(virtualInstanceIds.size());
     for (String virtualInstanceId : virtualInstanceIds) {
       CreateDBInstanceRequest request = buildCreateRequest(template, virtualInstanceId);
-      client.createDBInstance(request);
+      rdsInstances.add(new RDSInstance(template, virtualInstanceId, client.createDBInstance(request)));
     }
+    return rdsInstances;
   }
 
   @Override

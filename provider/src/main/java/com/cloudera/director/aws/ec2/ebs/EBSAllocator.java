@@ -14,10 +14,12 @@
 
 package com.cloudera.director.aws.ec2.ebs;
 
+import static com.cloudera.director.aws.ec2.EC2Retryer.retryUntil;
 import static com.google.common.base.Preconditions.checkNotNull;
 import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
+import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.AttachVolumeRequest;
@@ -45,6 +47,7 @@ import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
 import com.cloudera.director.aws.ec2.EC2TagHelper;
+import com.github.rholder.retry.RetryException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Stopwatch;
@@ -60,8 +63,11 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
+import org.joda.time.DateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -99,6 +105,7 @@ public class EBSAllocator {
   private final long availableTimeoutSeconds;
   private final long attachTimeoutSeconds;
   private final EC2TagHelper ec2TagHelper;
+  private final EBSDeviceMappings ebsDeviceMappings;
 
   /**
    * Constructs a new EBS allocator instance.
@@ -108,7 +115,7 @@ public class EBSAllocator {
    * @param ec2TagHelper the custom tag mappings
    */
   public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts,
-      EC2TagHelper ec2TagHelper) {
+      EC2TagHelper ec2TagHelper, EBSDeviceMappings ebsDeviceMappings) {
     checkNotNull(awsTimeouts, "awsTimeouts is null");
 
     this.client = checkNotNull(client, "ec2 client is null");
@@ -117,6 +124,7 @@ public class EBSAllocator {
     this.attachTimeoutSeconds =
         awsTimeouts.getTimeout(TIMEOUT_ATTACH).or(DEFAULT_TIMEOUT_SECONDS);
     this.ec2TagHelper = checkNotNull(ec2TagHelper, "ec2TagHelper is null");
+    this.ebsDeviceMappings = checkNotNull(ebsDeviceMappings, "ebsDeviceMappings is null");
   }
 
   /**
@@ -241,6 +249,10 @@ public class EBSAllocator {
             .withEncrypted(template.isEnableEbsEncryption())
             .withKmsKeyId(template.getEbsKmsKeyId().get())
             .withTagSpecifications(tagSpecification);
+
+        if (template.getEbsIops().isPresent()) {
+          request.withIops(template.getEbsIops().get());
+        }
 
         try {
           CreateVolumeResult result = client.createVolume(request);
@@ -394,6 +406,7 @@ public class EBSAllocator {
       List<InstanceEbsVolumes> instanceEbsVolumesList) throws InterruptedException {
 
     Set<String> requestedAttachments = Sets.newHashSet();
+    DateTime timeout = DateTime.now().plus(availableTimeoutSeconds);
 
     for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
       String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
@@ -403,12 +416,12 @@ public class EBSAllocator {
       }
 
       Map<String, InstanceEbsVolumes.Status> volumes = instanceEbsVolumes.getVolumeStatuses();
-      List<String> deviceNames = getEbsDeviceNames(volumes.size());
+      List<String> deviceNames = ebsDeviceMappings.getDeviceNames(volumes.size());
 
       int index = 0;
       for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
         String deviceName = deviceNames.get(index);
-        AttachVolumeRequest volumeRequest = new AttachVolumeRequest()
+        final AttachVolumeRequest volumeRequest = new AttachVolumeRequest()
             .withVolumeId(volumeId)
             .withInstanceId(ec2InstanceId)
             .withDevice(deviceName);
@@ -417,13 +430,25 @@ public class EBSAllocator {
         LOG.info(">> Attaching volume {} to instance {} with device name {}", volumeId, ec2InstanceId, deviceName);
 
         try {
-          client.attachVolume(volumeRequest);
+          retryUntil(
+              new Callable<Void>() {
+                @Override
+                public Void call() throws Exception {
+                  client.attachVolume(volumeRequest);
+                  return null;
+                }
+              },
+              timeout);
           requestedAttachments.add(volumeId);
-        } catch (AmazonServiceException ex) {
-          AWSExceptions.propagateIfUnrecoverable(ex);
+        } catch (RetryException e) {
+          LOG.warn("timeout attaching volume {} to instance {}", volumeId, ec2InstanceId);
+        } catch (ExecutionException ex) {
+          if (AmazonServiceException.class.isInstance(ex.getCause())) {
+            AWSExceptions.propagateIfUnrecoverable((AmazonServiceException) ex.getCause());
+          }
 
           LOG.error(String.format("Failed to attach volume %s to instance %s with device name %s",
-              volumeId, ec2InstanceId, deviceName), ex);
+              volumeId, ec2InstanceId, deviceName), ex.getCause());
         }
       }
     }
@@ -448,33 +473,6 @@ public class EBSAllocator {
     return updated;
   }
 
-
-  /**
-   * Returns a list of device names that that EBS volumes should attach with.
-   * Refer to http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/device_naming.html
-   *
-   * @param count the number of device names needed
-   * @return list of device names
-   */
-  public List<String> getEbsDeviceNames(int count) {
-    List<String> names = Lists.newArrayList();
-    char suffix = DEVICE_NAME_START_CHAR;
-    for (int i = 0; i < count; i++) {
-      String name = DEVICE_NAME_START_PREFIX + suffix;
-      names.add(name);
-
-      // Device character suffix should wrap around to the beginning after z.
-      // Note that 'a' is skipped since it's reserved for root. Although
-      // devices [b-e] are meant for instance store volumes, it's okay to
-      // map them since the EC2Provider should not be adding any instance
-      // store devices when EBS volumes are used.
-
-      if (suffix == 'z') suffix = 'b';
-      else suffix++;
-    }
-    return names;
-  }
-
   /**
    * Deletes a specified collection of volumes.
    *
@@ -482,10 +480,21 @@ public class EBSAllocator {
    */
   public void deleteVolumes(Collection<String> volumeIds) {
     LOG.info(">> Deleting {} volumes", volumeIds.size());
+    AmazonClientException ex = null;
+
     for (String id : volumeIds) {
       // TODO volumes that are attached need to be detached before we can delete
       DeleteVolumeRequest request = new DeleteVolumeRequest().withVolumeId(id);
-      client.deleteVolume(request);
+      try {
+        client.deleteVolume(request);
+      } catch (AmazonClientException e) {
+        LOG.error("<< Failed to delete volume " + id, e);
+        ex = (ex == null ? e : ex);
+      }
+    }
+
+    if (ex != null) {
+      AWSExceptions.propagate(ex);
     }
   }
 
@@ -496,46 +505,57 @@ public class EBSAllocator {
    *
    * @param instanceEbsVolumesList list of instances along with their associated volumes
    */
-  public void addDeleteOnTerminationFlag(List<InstanceEbsVolumes> instanceEbsVolumesList) {
-    Set<String> volumesToFlag = getAllVolumeIdsWithStatus(instanceEbsVolumesList, InstanceEbsVolumes.Status.ATTACHED);
+  public void addDeleteOnTerminationFlag(List<InstanceEbsVolumes> instanceEbsVolumesList) throws Exception {
+    final Set<String> volumesToFlag = getAllVolumeIdsWithStatus(
+        instanceEbsVolumesList, InstanceEbsVolumes.Status.ATTACHED);
 
     if (!volumesToFlag.isEmpty()) {
-      for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
-        String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
+      DateTime timeout = DateTime.now().plus(availableTimeoutSeconds);
+      for (final InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+        Callable<Void> task = new Callable<Void>() {
+          @Override
+          public Void call() throws Exception {
+            String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
 
-        DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
-            .withAttribute(InstanceAttributeName.BlockDeviceMapping)
-            .withInstanceId(ec2InstanceId);
+            DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
+                .withAttribute(InstanceAttributeName.BlockDeviceMapping)
+                .withInstanceId(ec2InstanceId);
 
-        List<InstanceBlockDeviceMapping> blockDeviceMappings =
-            client.describeInstanceAttribute(instanceAttributeRequest)
-                .getInstanceAttribute()
-                .getBlockDeviceMappings();
+            List<InstanceBlockDeviceMapping> blockDeviceMappings =
+                client.describeInstanceAttribute(instanceAttributeRequest)
+                    .getInstanceAttribute()
+                    .getBlockDeviceMappings();
 
-        for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
-          String volumeId = blockDeviceMapping.getEbs().getVolumeId();
+            for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
+              String volumeId = blockDeviceMapping.getEbs().getVolumeId();
 
-          // The block device mapping may have volumes associated with it that were not
-          // provisioned by us. We skip marking those volumes for deletion.
+              // The block device mapping may have volumes associated with it that were not
+              // provisioned by us. We skip marking those volumes for deletion.
 
-          if (!volumesToFlag.contains(volumeId)) {
-            continue;
+              if (!volumesToFlag.contains(volumeId)) {
+                continue;
+              }
+
+              InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
+                  .withEbs(
+                      new EbsInstanceBlockDeviceSpecification()
+                          .withDeleteOnTermination(true)
+                          .withVolumeId(volumeId)
+                  )
+                  .withDeviceName(blockDeviceMapping.getDeviceName());
+
+              ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
+                  .withBlockDeviceMappings(updatedSpec)
+                  .withInstanceId(ec2InstanceId);
+
+              client.modifyInstanceAttribute(modifyRequest);
+            }
+
+            return null;
           }
+        };
 
-          InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
-              .withEbs(
-                  new EbsInstanceBlockDeviceSpecification()
-                      .withDeleteOnTermination(true)
-                      .withVolumeId(volumeId)
-              )
-              .withDeviceName(blockDeviceMapping.getDeviceName());
-
-          ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
-              .withBlockDeviceMappings(updatedSpec)
-              .withInstanceId(ec2InstanceId);
-
-          client.modifyInstanceAttribute(modifyRequest);
-        }
+        retryUntil(task, timeout);
       }
     }
   }

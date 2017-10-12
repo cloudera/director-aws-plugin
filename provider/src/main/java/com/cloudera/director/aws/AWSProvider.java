@@ -26,22 +26,23 @@ import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EC2ProviderConfigurationValidator;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.aws.rds.RDSProvider;
 import com.cloudera.director.aws.rds.RDSProviderConfigurationValidator;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.ConfigurationValidator;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.CompositeConfigurationValidator;
-import com.cloudera.director.spi.v1.provider.CloudProviderMetadata;
-import com.cloudera.director.spi.v1.provider.ResourceProvider;
-import com.cloudera.director.spi.v1.provider.ResourceProviderMetadata;
-import com.cloudera.director.spi.v1.provider.util.AbstractCloudProvider;
-import com.cloudera.director.spi.v1.provider.util.SimpleCloudProviderMetadataBuilder;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.ConfigurationValidator;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.CompositeConfigurationValidator;
+import com.cloudera.director.spi.v2.provider.CloudProviderMetadata;
+import com.cloudera.director.spi.v2.provider.ResourceProvider;
+import com.cloudera.director.spi.v2.provider.ResourceProviderMetadata;
+import com.cloudera.director.spi.v2.provider.util.AbstractCloudProvider;
+import com.cloudera.director.spi.v2.provider.util.SimpleCloudProviderMetadataBuilder;
 
 import java.util.Arrays;
 import java.util.Collections;
@@ -97,6 +98,11 @@ public class AWSProvider extends AbstractCloudProvider {
    * The ephemeral device mappings.
    */
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
+
+  /**
+   * The EBS device mappings.
+   */
+  private final EBSDeviceMappings ebsDeviceMappings;
 
   /**
    * The EBS metadata.
@@ -168,6 +174,7 @@ public class AWSProvider extends AbstractCloudProvider {
    *
    * @param configuration                the configuration
    * @param ephemeralDeviceMappings      the ephemeral device mappings
+   * @param ebsDeviceMappings            the ebs device mappings
    * @param ebsMetadata                  the EBS metadata
    * @param virtualizationMappings       the virtualization mappings
    * @param rdsEndpoints                 the RDS endpoints
@@ -181,6 +188,7 @@ public class AWSProvider extends AbstractCloudProvider {
    */
   public AWSProvider(Configured configuration,
       EphemeralDeviceMappings ephemeralDeviceMappings,
+      EBSDeviceMappings ebsDeviceMappings,
       EBSMetadata ebsMetadata,
       VirtualizationMappings virtualizationMappings,
       RDSEndpoints rdsEndpoints,
@@ -190,7 +198,7 @@ public class AWSProvider extends AbstractCloudProvider {
       CustomTagMappings customTagMappings,
       NetworkRules networkRules,
       LocalizationContext rootLocalizationContext) {
-    this(configuration, ephemeralDeviceMappings, ebsMetadata,
+    this(configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses,
         awsClientConfig,
         awsFilters, awsTimeouts, customTagMappings, networkRules,
@@ -203,6 +211,7 @@ public class AWSProvider extends AbstractCloudProvider {
    *
    * @param configuration                the configuration
    * @param ephemeralDeviceMappings      the ephemeral device mappings
+   * @param ebsDeviceMappings            the ebs device mappings
    * @param ebsMetadata                  the ebs metadata
    * @param virtualizationMappings       the virtualization mappings
    * @param rdsEndpoints                 the RDS endpoints
@@ -219,6 +228,7 @@ public class AWSProvider extends AbstractCloudProvider {
   public AWSProvider(
       Configured configuration,
       EphemeralDeviceMappings ephemeralDeviceMappings,
+      EBSDeviceMappings ebsDeviceMappings,
       EBSMetadata ebsMetadata,
       VirtualizationMappings virtualizationMappings,
       RDSEndpoints rdsEndpoints,
@@ -234,6 +244,7 @@ public class AWSProvider extends AbstractCloudProvider {
     this.credentialsProvider =
         checkNotNull(credentialsProvider, "credentialsProvider is null");
     this.ephemeralDeviceMappings = ephemeralDeviceMappings;
+    this.ebsDeviceMappings = ebsDeviceMappings;
     this.ebsMetadata = ebsMetadata;
     this.virtualizationMappings = virtualizationMappings;
     this.rdsEndpoints = rdsEndpoints;
@@ -298,7 +309,7 @@ public class AWSProvider extends AbstractCloudProvider {
    */
   protected EC2Provider createEC2Provider(Configured target) {
     LocalizationContext localizationContext = getLocalizationContext();
-    return new EC2Provider(target, ephemeralDeviceMappings, ebsMetadata,
+    return new EC2Provider(target, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
         amazonEC2ClientProvider, amazonIdentityManagementClientProvider, awskmsClientProvider,
         localizationContext);

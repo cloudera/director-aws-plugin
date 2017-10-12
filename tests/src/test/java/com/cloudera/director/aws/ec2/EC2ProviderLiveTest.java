@@ -30,8 +30,10 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.REGION;
-import static com.cloudera.director.spi.v1.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
+import static com.cloudera.director.spi.v2.model.InstanceTemplate.InstanceTemplateConfigurationPropertyToken.INSTANCE_NAME_PREFIX;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThat;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeFalse;
@@ -52,6 +54,7 @@ import com.cloudera.director.aws.Tags.InstanceTags;
 import com.cloudera.director.aws.common.AWSKMSClientProvider;
 import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.shaded.com.amazonaws.AmazonServiceException;
@@ -74,15 +77,15 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Volume;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.VolumeState;
 import com.cloudera.director.aws.shaded.com.typesafe.config.Config;
 import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigValueFactory;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
-import com.cloudera.director.spi.v1.model.ConfigurationPropertyValue;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.InstanceState;
-import com.cloudera.director.spi.v1.model.InstanceStatus;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
-import com.cloudera.director.spi.v1.model.exception.UnrecoverableProviderException;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
+import com.cloudera.director.spi.v2.model.ConfigurationPropertyValue;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.InstanceState;
+import com.cloudera.director.spi.v2.model.InstanceStatus;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
+import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
@@ -158,6 +161,11 @@ public class EC2ProviderLiveTest {
         EphemeralDeviceMappings.getTestInstance(ImmutableMap.of("m3.medium", 1),
                                                 DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
+    // Configure ebs device mappings
+    EBSDeviceMappings ebsDeviceMappings =
+        EBSDeviceMappings.getDefaultInstance(ImmutableMap.<String, String>of(),
+                                             DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
+
     // Configure ebs metadata
     EBSMetadata ebsMetadata =
         EBSMetadata.getDefaultInstance(ImmutableMap.of("st1", "500-16384"),
@@ -177,6 +185,7 @@ public class EC2ProviderLiveTest {
     return new EC2Provider(
         configuration,
         ephemeralDeviceMappings,
+        ebsDeviceMappings,
         ebsMetadata,
         virtualizationMappings,
         awsFilters,
@@ -337,13 +346,14 @@ public class EC2ProviderLiveTest {
     @Parameterized.Parameters
     public static Collection<Object[]> data() {
       return Arrays.asList(new Object[][]{
-          {false, false, false, false, false},  // on-demand instances
-          {false, false, true, false, false},   // on-demand instances + ebs volumes
-          {false, false, true, false, true},    // on-demand instances + ebs volumes + immediate failure
-          {false, false, true, true, false},    // on-demand instances + ebs volumes + ebs encryption
-          {true, false, false, false, false},   // spot instances
-          {true, true, false, false, false},    // spot instances with block duration
-          {true, false, true, false, false}     // spot instances + ebs volumes
+          {false, false, false, false, false, false},  // on-demand instances
+          {false, false, true, false, false, false},   // on-demand instances + ebs volumes
+          {false, false, true, false, true, false},    // on-demand instances + ebs volumes + immediate failure
+          {false, false, true, true, false, false},    // on-demand instances + ebs volumes + ebs encryption
+          {true, false, false, false, false, false},   // spot instances
+          {true, true, false, false, false, false},    // spot instances with block duration
+          {true, false, true, false, false, false},    // spot instances + ebs volumes
+          {false, false, false, false, false, true}    // on-demand instances + delegation
       });
     }
 
@@ -352,26 +362,56 @@ public class EC2ProviderLiveTest {
     private boolean useEbsVolumes;
     private boolean testEbsEncryption;
     private boolean terminateImmediately;
+    private boolean testDelegation;
 
     public ParameterizedTest(boolean useSpotInstances, boolean useSpotBlock,
-        boolean useEbsVolumes, boolean testEbsEncryption, boolean terminateImmediately) {
+        boolean useEbsVolumes, boolean testEbsEncryption, boolean terminateImmediately,
+        boolean testDelegation) {
       this.useSpotInstances = useSpotInstances;
       this.useSpotBlock = useSpotBlock;
       this.useEbsVolumes = useEbsVolumes;
       this.testEbsEncryption = testEbsEncryption;
       this.terminateImmediately = terminateImmediately;
+      this.testDelegation = testDelegation;
     }
 
-    // TODO : extract AMI out to property file after extracting out Mastadon related tests/properties
+    /**
+     * Describes an AMI.
+     */
+    private static class Ami {
+      private String id;
+      private String region;
+      private boolean supportsHostKeyFingerprintRetrieval;
 
-    private static final Map<String, String> CENTOS64_AMI_BY_REGION = ImmutableMap.of(
-        "us-west-1", "ami-5d456c18",
-        "us-west-2", "ami-b3bf2f83"
+      Ami(String id, String region, boolean supportsHostKeyFingerprintRetrieval) {
+        this.id = id;
+        this.region = region;
+        this.supportsHostKeyFingerprintRetrieval = supportsHostKeyFingerprintRetrieval;
+      }
+
+      String getId() {
+        return id;
+      }
+
+      String getRegion() {
+        return region;
+      }
+
+      boolean getSupportsHostKeyFingerprintRetrieval() {
+        return supportsHostKeyFingerprintRetrieval;
+      }
+    }
+
+    // TODO : extract AMI out to properties file
+
+    private static final Map<String, Ami> CENTOS64_AMI_BY_REGION = ImmutableMap.of(
+        "us-west-1", new Ami("ami-5d456c18", "us-west-1", false),
+        "us-west-2", new Ami("ami-b3bf2f83", "us-west-2", false)
     );
 
-    private static final Map<String, String> RHEL64_AMI_BY_REGION = ImmutableMap.of(
-        "us-west-1", "ami-6283a827",
-        "us-west-2", "ami-b8a63b88"
+    private static final Map<String, Ami> RHEL67_AMI_BY_REGION = ImmutableMap.of(
+        "us-west-1", new Ami("ami-5b8a781f", "us-west-1", true),
+        "us-west-2", new Ami("ami-75f3f145", "us-west-2", true)
     );
 
     private void createEC2Instance(
@@ -383,20 +423,23 @@ public class EC2ProviderLiveTest {
 
       boolean success = true;
 
-      String ami;
+      Ami ami;
+      String amiId;
       String spotBidUSDPerHour = null;
       String spotString = "";
       Integer blockDurationMinutes = null;
 
       if (useSpotInstances) {
-        ami = CENTOS64_AMI_BY_REGION.get(region); //CentOS 6.4 PV
+        ami = CENTOS64_AMI_BY_REGION.get(region);
+        amiId = ami.getId();
         spotBidUSDPerHour = "0.50";
         spotString = "Spot ";
         if (useSpotBlock) {
           blockDurationMinutes = DEFAULT_BLOCK_DURATION_MINUTES;
         }
       } else {
-        ami = RHEL64_AMI_BY_REGION.get(region); //RHEL 6.4 PV
+        ami = RHEL67_AMI_BY_REGION.get(region);
+        amiId = ami.getId();
       }
 
       String username = System.getProperty("user.name");
@@ -463,7 +506,7 @@ public class EC2ProviderLiveTest {
       Map<String, String> instanceTemplateConfigMap = new LinkedHashMap<>();
       String templateName = username + "-test";
       putConfig(instanceTemplateConfigMap, INSTANCE_NAME_PREFIX, templateName);
-      putConfig(instanceTemplateConfigMap, IMAGE, ami);
+      putConfig(instanceTemplateConfigMap, IMAGE, amiId);
       putConfig(instanceTemplateConfigMap, SECURITY_GROUP_IDS, securityGroup);
       putConfig(instanceTemplateConfigMap, SUBNET_ID, subnetId);
       putConfig(instanceTemplateConfigMap, TYPE, "m3.medium");
@@ -484,7 +527,7 @@ public class EC2ProviderLiveTest {
       Set<String> mountedEbsVolumes = Sets.newHashSet();
       if (useEbsVolumes) {
         if (terminateImmediately) {
-          ebsVolumeSizeGiB = 2000;
+          ebsVolumeSizeGiB = 16000;
           ebsVolumeCount = 25;
         } else {
           ebsVolumeCount = 2;
@@ -543,15 +586,23 @@ public class EC2ProviderLiveTest {
           LOG.info(spotString + "Instance: " + virtualInstanceId + " has status: " + instanceStatus);
           if (!terminateImmediately) {
             if (instanceStatus != InstanceStatus.RUNNING) {
+              LOG.severe(spotString + "Instance: " + virtualInstanceId + " has status: " +
+                  instanceStatus + " instead of RUNNING");
               success = false;
               break;
             }
           } else {
             if (instanceStatus == InstanceStatus.RUNNING) {
+              LOG.severe(spotString + "Instance: " + virtualInstanceId + " has status: " +
+                  instanceStatus + " when we expected the instance to be terminated");
               success = false;
               break;
             }
           }
+        }
+
+        if (ami.supportsHostKeyFingerprintRetrieval && !terminateImmediately) {
+          checkHostKeyFingerprints(ec2Provider, instanceTemplate, virtualInstanceIds);
         }
 
         if (useSpotInstances) {
@@ -659,10 +710,35 @@ public class EC2ProviderLiveTest {
       assertTrue(success);
     }
 
+    private static void checkHostKeyFingerprints(EC2Provider ec2Provider, EC2InstanceTemplate template,
+                                                 List<String> virtualInstanceIds) throws InterruptedException {
+      LOG.info("Checking host key fingerprints");
+
+      Map<String, Set<String>> fingerprintsById = ec2Provider.getHostKeyFingerprints(template, virtualInstanceIds);
+      assertEquals(fingerprintsById.size(), virtualInstanceIds.size());
+
+      Set<String> allHostKeyFingerprints = Sets.newHashSet();
+      for (Map.Entry<String, Set<String>> entry: fingerprintsById.entrySet()) {
+        String vid = entry.getKey();
+        Set<String> fingerprints = entry.getValue();
+
+        LOG.info(String.format("VID %s has host key fingerprints %s", vid, fingerprints.toString()));
+        assertFalse(fingerprints.isEmpty());
+
+        // verify that fingerprints are unique
+        for (String fingerprint : fingerprints) {
+          assertTrue(!fingerprint.isEmpty());
+          assertTrue(allHostKeyFingerprints.add(fingerprint));
+        }
+      }
+    }
+
     @Test
     public void testCreateEC2Instance() throws InterruptedException {
       assumeTrue(isLive());
       assumeFalse(terminateImmediately);
+      assumeFalse(testDelegation);
+
       assumeNotNull(testSubnet);
       assumeNotNull(testSecurityGroup);
       assumeNotNull(testKmsKeyArn);
@@ -683,9 +759,11 @@ public class EC2ProviderLiveTest {
     }
 
     @Test
-    public void testDelegatedRoleAccessInMastodonTest() throws InterruptedException {
+    public void testDelegatedRoleAccessTest() throws InterruptedException {
       assumeTrue(isLive());
       assumeFalse(terminateImmediately);
+      assumeTrue(testDelegation);
+
       assumeNotNull(delegatedRoleArn);
       assumeNotNull(delegatedRoleExternalId);
       assumeNotNull(externalAccountSubnetId);
@@ -693,7 +771,7 @@ public class EC2ProviderLiveTest {
       assumeNotNull(externalAccountKmsKeyArn);
       assumeNotNull(externalAccountRegion);
 
-      LOG.info("Testing delegated role access in mastodon-test account.");
+      LOG.info("Testing delegated role access in external account.");
       // Configure credentials
       Map<String, String> credentialsConfigMap = new LinkedHashMap<>();
       credentialsConfigMap.put("delegatedRoleArn", delegatedRoleArn);
@@ -720,6 +798,8 @@ public class EC2ProviderLiveTest {
     public void testCreateEC2TerminatedImmediately() throws InterruptedException {
       assumeTrue(isLive());
       assumeTrue(terminateImmediately);
+      assumeFalse(testDelegation);
+
       assumeNotNull(testSubnet);
       assumeNotNull(testSecurityGroup);
       assumeNotNull(testKmsKeyArn);

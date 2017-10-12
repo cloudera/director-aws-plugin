@@ -20,7 +20,7 @@ import static org.mockito.Mockito.when;
 
 import com.cloudera.director.aws.shaded.com.typesafe.config.Config;
 import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigFactory;
-import com.cloudera.director.spi.v1.model.InstanceTemplate;
+import com.cloudera.director.spi.v2.model.InstanceTemplate;
 import com.google.common.collect.ImmutableMap;
 
 import java.util.Arrays;

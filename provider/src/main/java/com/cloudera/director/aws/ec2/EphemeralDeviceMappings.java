@@ -15,19 +15,18 @@
 package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EphemeralDeviceMappings.EphemeralDeviceMappingsConfigProperties.EphemeralDeviceMappingsConfigurationPropertyToken.CUSTOM_MAPPINGS_PATH;
-import static com.cloudera.director.aws.ec2.EphemeralDeviceMappings.EphemeralDeviceMappingsConfigProperties.EphemeralDeviceMappingsConfigurationPropertyToken.DEVICE_NAME_PREFIX;
-import static com.cloudera.director.aws.ec2.EphemeralDeviceMappings.EphemeralDeviceMappingsConfigProperties.EphemeralDeviceMappingsConfigurationPropertyToken.RANGE_START;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.amazonaws.services.ec2.model.BlockDeviceMapping;
+import com.cloudera.director.aws.Configurations;
 import com.cloudera.director.aws.common.PropertyResolvers;
-import com.cloudera.director.spi.v1.model.ConfigurationProperty;
-import com.cloudera.director.spi.v1.model.Configured;
-import com.cloudera.director.spi.v1.model.LocalizationContext;
-import com.cloudera.director.spi.v1.model.util.ChildLocalizationContext;
-import com.cloudera.director.spi.v1.model.util.SimpleConfiguration;
-import com.cloudera.director.spi.v1.model.util.SimpleConfigurationPropertyBuilder;
+import com.cloudera.director.spi.v2.model.ConfigurationProperty;
+import com.cloudera.director.spi.v2.model.Configured;
+import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
+import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
+import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Function;
 import com.google.common.base.Functions;
@@ -62,33 +61,15 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
 
   private static final Logger LOG = LoggerFactory.getLogger(EphemeralDeviceMappings.class);
 
-  public static class EphemeralDeviceMappingsConfigProperties {
+  public static class EphemeralDeviceMappingsConfigProperties extends DeviceMappingsConfigProperties {
 
     /**
      * Ephemeral device mappings configuration properties.
      */
     // Fully qualifying class name due to compiler bug
+    @SuppressWarnings("PMD.UnnecessaryFullyQualifiedName")
     public static enum EphemeralDeviceMappingsConfigurationPropertyToken
-        implements com.cloudera.director.spi.v1.model.ConfigurationPropertyToken {
-
-      /**
-       * The device name prefix for ephemeral drives.
-       */
-      DEVICE_NAME_PREFIX(new SimpleConfigurationPropertyBuilder()
-          .configKey("deviceNamePrefix")
-          .name("Device name prefix")
-          .defaultDescription("The device name prefix for ephemeral drives.")
-          .build()),
-
-      /**
-       * The range start for attaching ephemeral drives.
-       */
-      RANGE_START(new SimpleConfigurationPropertyBuilder()
-          .configKey("rangeStart")
-          .name("Range start")
-          .defaultDescription("The range start for attaching ephemeral drives.")
-          .build()),
-
+        implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
       /**
        * Path for the custom device mappings file. Relative paths are based on
        * the plugin configuration directory.
@@ -134,9 +115,8 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
 
     private final File configurationDirectory;
 
-    private String deviceNamePrefix = DEFAULT_DEVICE_NAME_PREFIX;
-    private char rangeStart = DEFAULT_RANGE_START_FOR_EPHEMERAL_DRIVES;
     private String customMappingsPath = DEFAULT_CUSTOM_MAPPINGS_PATH;
+
 
     /**
      * Creates ephemeral device mappings config properties with the specified parameters.
@@ -148,43 +128,22 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
     public EphemeralDeviceMappingsConfigProperties(Configured configuration,
         File configurationDirectory,
         LocalizationContext cloudLocalizationContext) {
+      super(Configurations.EPHEMERAL_DEVICE_MAPPINGS_SECTION, configuration, cloudLocalizationContext);
       this.configurationDirectory = configurationDirectory;
       LocalizationContext localizationContext = new ChildLocalizationContext(
-          cloudLocalizationContext, "ephemeralDeviceMappings");
-      setDeviceNamePrefix(configuration.getConfigurationValue(DEVICE_NAME_PREFIX,
-          localizationContext));
-      setRangeStart(configuration.getConfigurationValue(RANGE_START,
-          localizationContext));
+          cloudLocalizationContext, Configurations.EPHEMERAL_DEVICE_MAPPINGS_SECTION);
       setCustomMappingsPath(configuration.getConfigurationValue(CUSTOM_MAPPINGS_PATH,
           localizationContext));
     }
 
-    public String getDeviceNamePrefix() {
-      return deviceNamePrefix;
+    @Override
+    public String getDefaultDeviceNamePrefix() {
+      return DEFAULT_DEVICE_NAME_PREFIX;
     }
 
-    public void setDeviceNamePrefix(String deviceNamePrefix) {
-      if (deviceNamePrefix != null) {
-        LOG.info("Overriding deviceNamePrefix={} (default {})", deviceNamePrefix,
-            DEFAULT_DEVICE_NAME_PREFIX);
-        this.deviceNamePrefix = deviceNamePrefix;
-      }
-    }
-
-    public char getRangeStart() {
-      return rangeStart;
-    }
-
-    public void setRangeStart(String rangeStart) {
-      if (rangeStart != null) {
-        if (rangeStart.length() != 1) {
-          throw new IllegalArgumentException("rangeStart must be a single character");
-        }
-        char c = rangeStart.charAt(0);
-        LOG.info("Overriding rangeStart={} (default {})", c,
-            DEFAULT_RANGE_START_FOR_EPHEMERAL_DRIVES);
-        this.rangeStart = c;
-      }
+    @Override
+    public char getDefaultRangeStart() {
+      return DEFAULT_RANGE_START_FOR_EPHEMERAL_DRIVES;
     }
 
     public String getCustomMappingsPath() {
@@ -286,6 +245,8 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
     this.ephemeralDeviceMappingsResolver = ephemeralDeviceMappingsResolver;
   }
 
+  private final DeviceNameUtils deviceNameUtils = new DeviceNameUtils();
+
   /**
    * Generates a list of block device mappings for all ephemeral drives for
    * the given instance type.
@@ -310,7 +271,7 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
       return Collections.emptyList();
     }
 
-    List<String> deviceNames = getLinuxDeviceNames(
+    List<String> deviceNames = deviceNameUtils.getDeviceNames(
         ephemeralDeviceMappingsConfigProperties.getDeviceNamePrefix(),
         ephemeralDeviceMappingsConfigProperties.getRangeStart(),
         count);
@@ -340,20 +301,10 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
       return Collections.emptyList();
     }
 
-    return getLinuxDeviceNames(
+    return deviceNameUtils.getDeviceNames(
         EphemeralDeviceMappingsConfigProperties.DEFAULT_DEVICE_NAME_PREFIX,
         EphemeralDeviceMappingsConfigProperties.DEFAULT_RANGE_START_FOR_EPHEMERAL_DRIVES,
         count.get());
-  }
-
-  @VisibleForTesting
-  List<String> getLinuxDeviceNames(String pathPrefix, char startSuffix, int count) {
-    List<String> result = Lists.newArrayListWithExpectedSize(count);
-    for (int i = 0; i < count; i++) {
-      char suffix = (char) (startSuffix + i);
-      result.add(pathPrefix + suffix);
-    }
-    return result;
   }
 
   /**
