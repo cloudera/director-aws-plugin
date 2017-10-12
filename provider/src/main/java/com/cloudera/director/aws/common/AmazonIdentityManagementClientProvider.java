@@ -23,9 +23,12 @@ import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
 import com.amazonaws.services.identitymanagement.model.NoSuchEntityException;
 import com.cloudera.director.aws.AWSExceptions;
+import com.cloudera.director.spi.v1.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v1.model.Configured;
 import com.cloudera.director.spi.v1.model.LocalizationContext;
 import com.cloudera.director.spi.v1.model.exception.PluginExceptionConditionAccumulator;
+
+import java.util.Objects;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -91,5 +94,19 @@ public class AmazonIdentityManagementClientProvider
     }
 
     return client;
+  }
+
+  @Override
+  protected boolean isEquals(Configured lhs, Configured rhs, LocalizationContext localizationContext) {
+    boolean isEqual = super.isEquals(lhs, rhs, localizationContext);
+    isEqual = isEqual || isEqualConfigValue(lhs, rhs, localizationContext, IAM_ENDPOINT);
+    return isEqual;
+  }
+
+  private boolean isEqualConfigValue(Configured lhs, Configured rhs, LocalizationContext localizationContext,
+                                     ConfigurationPropertyToken configToken) {
+    String lhsValue = lhs.getConfigurationValue(configToken, localizationContext);
+    String rhsValue = rhs.getConfigurationValue(configToken, localizationContext);
+    return Objects.equals(lhsValue, rhsValue);
   }
 }

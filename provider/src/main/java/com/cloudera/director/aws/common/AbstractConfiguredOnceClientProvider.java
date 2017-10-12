@@ -66,7 +66,7 @@ public abstract class AbstractConfiguredOnceClientProvider<T> implements ClientP
       initialized = true;
 
     } else {
-      if (!isEquals(configuration, this.configuration)) {
+      if (!isEquals(configuration, this.configuration, providerLocalizationContext)) {
         throw new IllegalStateException("invariance violation: configuration immutable but changed");
       }
     }
@@ -92,7 +92,15 @@ public abstract class AbstractConfiguredOnceClientProvider<T> implements ClientP
       LocalizationContext providerLocalizationContext,
       boolean verify);
 
-  private static boolean isEquals(Configured lhs, Configured rhs) {
+  /**
+   * Returns whether the specified configurations are equal.
+   *
+   * @param lhs first configuration object
+   * @param rhs second configuration object
+   * @param localizationContext the localization context
+   * @return whether the configurations are equal
+   */
+  protected boolean isEquals(Configured lhs, Configured rhs, LocalizationContext localizationContext) {
     return Objects.equals(lhs, rhs)
         || lhs != null && rhs != null && Objects.equals(lhs.getConfiguration(null), rhs.getConfiguration(null));
   }

@@ -212,6 +212,10 @@
                             <pattern>com.google.common</pattern>
                             <shadedPattern>${shade-prefix}.com.google.common</shadedPattern>
                         </relocation>
+                        <relocation><!-- google thirdparty -->
+                            <pattern>com.google.thirdparty</pattern>
+                            <shadedPattern>${shade-prefix}.com.google.thirdparty</shadedPattern>
+                        </relocation>
                         <relocation><!-- spring-core -->
                             <pattern>org.springframework</pattern>
                             <shadedPattern>${shade-prefix}.org.springframework</shadedPattern>
@@ -232,6 +236,10 @@
                             <pattern>com.amazonaws</pattern>
                             <shadedPattern>${shade-prefix}.com.amazonaws</shadedPattern>
                         </relocation>
+                        <relocation><!-- amazon -->
+                            <pattern>software.amazon</pattern>
+                            <shadedPattern>${shade-prefix}.software.amazon</shadedPattern>
+                        </relocation>
                         <relocation><!-- commons-codec, via aws-java-sdk -->
                             <pattern>org.apache.commons.codec</pattern>
                             <shadedPattern>${shade-prefix}.org.apache.commons.codec</shadedPattern>
@@ -251,6 +259,10 @@
                         <relocation><!-- still aspectj -->
                             <pattern>aj.org</pattern>
                             <shadedPattern>${shade-prefix}.aj.org</shadedPattern>
+                        </relocation>
+                        <relocation>
+                            <pattern>Play</pattern>
+                            <shadedPattern>${shade-prefix}.play</shadedPattern>
                         </relocation>
                     </relocations>
                     <transformers>
