@@ -89,4 +89,14 @@ public final class Configurations {
    * The HOCON path prefix for custom tag names.
    */
   public static final String CUSTOM_TAG_MAPPINGS_SECTION = "customTagMappings";
+
+  /**
+   * The HOCON path prefix for STS role configurations.
+   */
+  public static final String STS_ROLES_SECTION = "stsRoles";
+
+  /**
+   * The HOCON path prefix for using tag on create.
+   */
+  public static final String USE_TAG_ON_CREATE = "useTagOnCreate";
 }

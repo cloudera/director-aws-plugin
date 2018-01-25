@@ -50,13 +50,13 @@ import org.junit.rules.TemporaryFolder;
 public class AWSLauncherTest {
 
   @Rule
-  public TemporaryFolder TEMPORARY_FOLDER = new TemporaryFolder();
+  public TemporaryFolder temporaryFolder = new TemporaryFolder();
 
   @Test
   public void testLauncher() throws InterruptedException, IOException {
 
     Launcher launcher = new AWSLauncher();
-    launcher.initialize(TEMPORARY_FOLDER.getRoot(), null);
+    launcher.initialize(temporaryFolder.getRoot(), null);
 
     assertEquals(1, launcher.getCloudProviderMetadata().size());
     CloudProviderMetadata metadata = launcher.getCloudProviderMetadata().get(0);
@@ -91,15 +91,16 @@ public class AWSLauncherTest {
   @Test
   public void testLauncherConfigEmpty() {
     AWSLauncher launcher = new AWSLauncher();
-    launcher.initialize(TEMPORARY_FOLDER.getRoot(), null);
+    launcher.initialize(temporaryFolder.getRoot(), null);
 
     assertNotNull(launcher.awsTimeouts);
+    assertTrue(launcher.stsRoles.getRoleConfigurations().isEmpty());
   }
 
   @Test
   public void testLauncherConfig() throws InterruptedException, IOException {
     AWSLauncher launcher = new AWSLauncher();
-    File configDir = TEMPORARY_FOLDER.getRoot();
+    File configDir = temporaryFolder.getRoot();
     File configFile = new File(configDir, Configurations.CONFIGURATION_FILE_NAME);
     PrintWriter printWriter = new PrintWriter(new BufferedWriter(new OutputStreamWriter(
         new FileOutputStream(configFile), "UTF-8")));
@@ -119,9 +120,17 @@ public class AWSLauncherTest {
     printWriter.println("    }");
     printWriter.println("  }");
     printWriter.println("}");
+    printWriter.println(Configurations.STS_ROLES_SECTION + ": [");
+    printWriter.println("  {");
+    printWriter.println("    " + STSRoles.ROLE_ARN + ": \"arn:aws:iam::123456789012:role/roleSwitch\"");
+    printWriter.println("    " + STSRoles.ROLE_SESSION_NAME + ": reader");
+    printWriter.println("    " + STSRoles.ROLE_EXTERNAL_ID + ": token");
+    printWriter.println("  }");
+    printWriter.println("]");
     printWriter.close();
     launcher.initialize(configDir, null);
     assertEquals(8, launcher.awsClientConfig.getMaxErrorRetries());
     assertEquals(123L, launcher.awsTimeouts.getTimeout("ec2.ebs.availableSeconds").get().longValue());
+    assertEquals(1, launcher.stsRoles.getRoleConfigurations().size());
   }
 }

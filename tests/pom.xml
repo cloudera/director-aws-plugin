@@ -23,7 +23,7 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>aws</artifactId>
-        <version>1.4.4</version>
+        <version>1.4.5</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -35,14 +35,14 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
-        <director-spi-v2.version>1.0.0</director-spi-v2.version>
+        <director-spi-v2.version>1.0.1</director-spi-v2.version>
         <slf4j.version>1.7.10</slf4j.version>
         <spring.version>4.1.5.RELEASE</spring.version>
         <commons-codec.version>1.10</commons-codec.version>
         <junit.version>4.12</junit.version>
         <assertj.version>1.6.0</assertj.version>
-        <mockito.version>1.10.19</mockito.version>
-        <guava.version>15.0</guava.version>
+        <mockito.version>2.10.0</mockito.version>
+        <guava.version>19.0</guava.version>
         <maven-compiler-plugin.version>3.3</maven-compiler-plugin.version>
         <maven-checkstyle-plugin.version>2.13</maven-checkstyle-plugin.version>
         <maven-pmd-plugin.version>3.7</maven-pmd-plugin.version>

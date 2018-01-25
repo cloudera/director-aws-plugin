@@ -19,13 +19,20 @@ import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSC
 import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.DELEGATED_ROLE_EXTERNAL_ID;
 import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SECRET_ACCESS_KEY;
 import static com.cloudera.director.aws.AWSCredentialsProviderChainProvider.AWSConfigCredentialsProviderProvider.AWSConfigCredentialsProviderConfigurationPropertyToken.SESSION_TOKEN;
+import static com.cloudera.director.aws.STSRoles.getTimestampedSessionName;
+import static com.cloudera.director.aws.STSRoles.parseRoleName;
 
+import com.amazonaws.AmazonClientException;
 import com.amazonaws.auth.AWSCredentialsProvider;
+import com.amazonaws.auth.AWSSessionCredentialsProvider;
 import com.amazonaws.auth.AWSStaticCredentialsProvider;
 import com.amazonaws.auth.BasicAWSCredentials;
 import com.amazonaws.auth.BasicSessionCredentials;
 import com.amazonaws.auth.DefaultAWSCredentialsProviderChain;
-import com.amazonaws.auth.STSAssumeRoleSessionCredentialsProvider;
+import com.amazonaws.client.builder.AwsClientBuilder;
+import com.amazonaws.regions.DefaultAwsRegionProviderChain;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceClientBuilder;
+import com.cloudera.director.aws.STSAssumeNRolesSessionCredentialsProvider.RoleConfiguration;
 import com.cloudera.director.spi.v2.model.ConfigurationProperty;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
@@ -35,10 +42,10 @@ import com.cloudera.director.spi.v2.provider.CredentialsProviderMetadata;
 import com.cloudera.director.spi.v2.provider.util.SimpleCredentialsProviderMetadata;
 import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
+import com.google.common.collect.FluentIterable;
+import com.google.common.collect.ImmutableList;
 
-import java.text.DateFormat;
-import java.text.SimpleDateFormat;
-import java.util.Date;
+import java.util.Collections;
 import java.util.List;
 
 import org.slf4j.Logger;
@@ -54,6 +61,25 @@ public class AWSCredentialsProviderChainProvider
   private static final Logger LOG =
       LoggerFactory.getLogger(AWSCredentialsProviderChainProvider.class);
 
+  private final List<RoleConfiguration> roleConfigurations;
+
+  /**
+   * Creates an instance of AWS crendential provider chain provider.
+   */
+  public AWSCredentialsProviderChainProvider() {
+    this(null);
+  }
+
+  /**
+   * Creates an instance of AWS crendential provider chain provider.
+   * @param roleConfigurations the role configurations
+   */
+  public AWSCredentialsProviderChainProvider(List<RoleConfiguration> roleConfigurations) {
+    this.roleConfigurations = roleConfigurations != null
+        ? ImmutableList.copyOf(roleConfigurations)
+        : Collections.<RoleConfiguration>emptyList();
+  }
+
   /**
    * The credentials provider metadata.
    */
@@ -67,9 +93,10 @@ public class AWSCredentialsProviderChainProvider
   }
 
   @Override
-  public AWSCredentialsProvider createCredentials(Configured config,
+  public AWSCredentialsProvider createCredentials(
+      Configured config,
       LocalizationContext localizationContext) {
-    return new AWSConfigCredentialsProviderProvider(config, localizationContext)
+    return new AWSConfigCredentialsProviderProvider(roleConfigurations, config, localizationContext)
         .getCredentialsProvider();
   }
 
@@ -209,14 +236,22 @@ public class AWSCredentialsProviderChainProvider
      */
     private final static int ASSUME_ROLE_DURATION_SECONDS = 3600;
 
+    private final static DefaultAwsRegionProviderChain DEFAULT_REGION_PROVIDER =
+        new DefaultAwsRegionProviderChain();
+
+    private final static String STS_GLOBAL_ENDPOINT = "sts.amazonaws.com";
+
     /**
      * Creates a config-based AWS credentials provider with the specified parameters.
      *
+     * @param roleConfigurations  the role configurations
      * @param configuration       the configuration
      * @param localizationContext the localization context
      */
     @SuppressWarnings("PMD.UselessParentheses")
-    public AWSConfigCredentialsProviderProvider(Configured configuration,
+    public AWSConfigCredentialsProviderProvider(
+        List<RoleConfiguration> roleConfigurations,
+        Configured configuration,
         LocalizationContext localizationContext) {
       super(configuration);
       Optional<String> optionalAccessKeyId =
@@ -239,8 +274,17 @@ public class AWSCredentialsProviderChainProvider
         Optional<String> externalId =
             getOptionalConfigurationValue(DELEGATED_ROLE_EXTERNAL_ID, localizationContext);
         if (roleArn.isPresent() && externalId.isPresent()) {
-          credentialsProvider =
-              createAssumeRoleSessionCredentialsProvider(roleArn.get(), externalId.get());
+          roleConfigurations = FluentIterable
+              .from(roleConfigurations)
+              .append(new RoleConfiguration(
+                  roleArn.get(),
+                  getTimestampedSessionName(parseRoleName(roleArn.get())),
+                  externalId.get()))
+              .toList();
+        }
+
+        if (!roleConfigurations.isEmpty()) {
+          credentialsProvider = createAssumeRoleSessionCredentialsProvider(roleConfigurations);
         } else {
           LOG.info("AWS credentials not fully specified."
               + " Credentials provider chain fallback will be used.");
@@ -261,58 +305,34 @@ public class AWSCredentialsProviderChainProvider
     /**
      * Creates the STS assume role session credentials provider.
      *
-     * @param roleArn    the Amazon Resource Name (ARN) of the role to assume
-     * @param externalId the unique identifier that is used by third parties when assuming
-     *                   roles in their customers' accounts
-     * @return the STS assume role session credentials provider
+     * @param roleConfigurations the STS role configurations
+     * @return an AWS session credentials provider
      */
-    private STSAssumeRoleSessionCredentialsProvider createAssumeRoleSessionCredentialsProvider(
-        String roleArn,
-        String externalId) {
-      // Role ARN format:
-      // roleArn:partition:service:region:account-id:resourcetype/resource
-      // See, https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#Identifiers_ARNs
-      String[] roleArnComponents = roleArn.split(":");
-      String[] resourceComponents;
-      if (roleArnComponents.length < 6
-          || (resourceComponents = roleArnComponents[5].split("/")).length < 2) {
-        throw new IllegalArgumentException("Malformed role ARN: " + roleArn);
-      }
-      String assumedRoleName = resourceComponents[1];
-      DateFormat dateFormat = new SimpleDateFormat("yyMMddHHmmssSSSz");
-      String currentTime = dateFormat.format(new Date());
+    private AWSSessionCredentialsProvider createAssumeRoleSessionCredentialsProvider(
+        List<RoleConfiguration> roleConfigurations) {
+      LOG.info(
+          "Building provider to assume role {} with duration {} in seconds",
+          roleConfigurations,
+          ASSUME_ROLE_DURATION_SECONDS);
 
-      /*
-       * The role session name uniquely identifies a session when the same
-       * role is assumed by different principals or for different reasons.
-       * In cross-account scenarios, the role session name is visible to, and
-       * can be logged by the account that owns the role. The role session name
-       * is also used in the ARN of the assumed role principal. This means that
-       * subsequent cross-account API requests using the temporary security
-       * credentials will expose the role session name to the external account
-       * in their CloudTrail logs.
-       *
-       * The format for the session name, as described by its regex pattern, is
-       * a string of characters consisting of upper- and lower-case alphanumeric
-       * characters with no spaces. You can also include any of the following
-       * characters: =,.@-
-       *
-       * Its minimum length is 2, and maximum length is 64.
-       */
-      final int maxLen = 64;
-      String roleSessionName = String.format("%s-%s", currentTime, assumedRoleName);
-      if (roleSessionName.length() > maxLen) {
-        roleSessionName = roleSessionName.substring(0, maxLen);
-      }
-
-      LOG.info("Building provider to assume role: '{}' with external id: '{}' session name: '{}'"
-              + " and duration {} seconds",
-          roleArn, externalId, roleSessionName, ASSUME_ROLE_DURATION_SECONDS);
-
-      return new STSAssumeRoleSessionCredentialsProvider.Builder(roleArn, roleSessionName)
-          .withExternalId(externalId)
+      return new STSAssumeNRolesSessionCredentialsProvider
+          .Builder(roleConfigurations, getSTSClientBuilder())
           .withRoleSessionDurationSeconds(ASSUME_ROLE_DURATION_SECONDS)
           .build();
+    }
+
+    private AWSSecurityTokenServiceClientBuilder getSTSClientBuilder() {
+      AWSSecurityTokenServiceClientBuilder builder = AWSSecurityTokenServiceClientBuilder.standard();
+
+      try {
+        builder.withRegion(DEFAULT_REGION_PROVIDER.getRegion());
+      } catch (AmazonClientException e) {
+        LOG.warn("failed to retrieve region, falling back to STS global endpoint", e);
+        builder.withEndpointConfiguration(
+            new AwsClientBuilder.EndpointConfiguration(STS_GLOBAL_ENDPOINT, null));
+      }
+
+      return builder;
     }
 
     /**

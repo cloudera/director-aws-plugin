@@ -15,8 +15,8 @@
 package com.cloudera.director.aws;
 
 import static com.cloudera.director.aws.AWSClientConfig.AWSClientConfigurationPropertyToken;
-import static com.cloudera.director.aws.ec2.EphemeralDeviceMappings.EphemeralDeviceMappingsConfigProperties.EphemeralDeviceMappingsConfigurationPropertyToken;
 import static com.cloudera.director.aws.ec2.DeviceMappingsConfigProperties.DeviceMappingsConfigurationPropertyToken;
+import static com.cloudera.director.aws.ec2.EphemeralDeviceMappings.EphemeralDeviceMappingsConfigProperties.EphemeralDeviceMappingsConfigurationPropertyToken;
 import static com.cloudera.director.aws.ec2.VirtualizationMappings.VirtualizationMappingsConfigProperties.VirtualizationMappingsConfigurationPropertyToken;
 import static com.cloudera.director.aws.rds.RDSEndpoints.RDSEndpointsConfigProperties.RDSEndpointsConfigurationPropertyToken;
 
@@ -61,6 +61,11 @@ public class AWSLauncher extends AbstractLauncher {
    */
   private static final List<CloudProviderMetadata> CLOUD_PROVIDER_METADATA =
       Collections.unmodifiableList(Collections.singletonList(AWSProvider.METADATA));
+
+  /**
+   * The default setting for using tag on create.
+   */
+  public static final boolean DEFAULT_USE_TAG_ON_CREATE = true;
 
   /**
    * Creates ephemeral device mappings with the specified parameters.
@@ -203,6 +208,17 @@ public class AWSLauncher extends AbstractLauncher {
         null : config.getConfig(Configurations.CUSTOM_TAG_MAPPINGS_SECTION));
   }
 
+  private static STSRoles getRoleConfigurations(Config config) {
+    return config != null && config.hasPath(Configurations.STS_ROLES_SECTION)
+        ? new STSRoles(config.getConfigList(Configurations.STS_ROLES_SECTION))
+        : STSRoles.DEFAULT;
+  }
+
+  private static boolean getUseTagOnCreate(Config config) {
+    return config != null && config.hasPath(Configurations.USE_TAG_ON_CREATE) ?
+        config.getBoolean(Configurations.USE_TAG_ON_CREATE) : DEFAULT_USE_TAG_ON_CREATE;
+  }
+
   private static <T extends ConfigurationPropertyToken> Configured getConfiguration(Config config,
       String section, T[] configurationPropertyTokens) {
     if (config == null) {
@@ -249,6 +265,12 @@ public class AWSLauncher extends AbstractLauncher {
 
   private NetworkRules networkRules;
 
+  @VisibleForTesting
+  STSRoles stsRoles;
+
+  @VisibleForTesting
+  protected boolean useTagOnCreate;
+
   /**
    * Creates an AWS launcher.
    */
@@ -288,6 +310,8 @@ public class AWSLauncher extends AbstractLauncher {
     awsTimeouts = getAWSTimeouts(config);
     customTagMappings = getCustomTagMappings(config);
     networkRules = getNetworkRules(configurationDirectory);
+    stsRoles = getRoleConfigurations(config);
+    useTagOnCreate = getUseTagOnCreate(config);
   }
 
   /**
@@ -313,7 +337,8 @@ public class AWSLauncher extends AbstractLauncher {
     }
     return new AWSProvider(configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses, awsClientConfig,
-        awsFilters, awsTimeouts, customTagMappings, networkRules, getLocalizationContext(locale));
+        awsFilters, awsTimeouts, customTagMappings, networkRules, stsRoles, useTagOnCreate,
+        getLocalizationContext(locale));
   }
 
   /**

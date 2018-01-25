@@ -34,6 +34,8 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA_UNENCODED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.spi.v2.model.util.Validations.addError;
 
@@ -74,22 +76,22 @@ import com.google.common.base.Throwables;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
  * Validates EC2 instance template configuration.
  */
-@SuppressWarnings({"PMD.TooManyStaticImports", "PMD.UnusedPrivateField", "PMD.UnusedPrivateField",
-    "unused", "PMD.UselessParentheses"})
+@SuppressWarnings({ "PMD.TooManyStaticImports", "PMD.UnusedPrivateField", "PMD.UnusedPrivateField",
+    "unused", "PMD.UselessParentheses" })
 public class EC2InstanceTemplateConfigurationValidator implements ConfigurationValidator {
 
   private static final Logger LOG =
@@ -269,6 +271,10 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   static final String KMS_KEY_DENIED_MESSAGE =
       "Access denied attempting to verify the KMS Key ID. Ensure kms:DescribeKey permission is granted";
 
+  @VisibleForTesting
+  static final String BOTH_USER_DATA_USED =
+      "Specify only the encoded or unencoded user data, not both";
+
   /**
    * The EC2 provider.
    */
@@ -304,7 +310,8 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
 
     checkImage(ec2Client, configuration, accumulator, localizationContext);
     Map<String, String> vpcSubnetMap = checkSubnetId(ec2Client, configuration, accumulator, localizationContext);
-    Map<String, Set<String>> vpcSecurityGroupMap = checkSecurityGroupIds(ec2Client, configuration, accumulator, localizationContext);
+    Map<String, Set<String>> vpcSecurityGroupMap =
+        checkSecurityGroupIds(ec2Client, configuration, accumulator, localizationContext);
     checkVpc(vpcSubnetMap, vpcSecurityGroupMap, accumulator, localizationContext);
     checkAvailabilityZone(ec2Client, configuration, accumulator, localizationContext);
     checkPlacementGroup(ec2Client, configuration, accumulator, localizationContext);
@@ -315,6 +322,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     checkEbsVolumes(kmsClient, configuration, accumulator, localizationContext);
     checkKeyName(ec2Client, configuration, accumulator, localizationContext);
     checkSpotParameters(configuration, accumulator, localizationContext);
+    checkUserData(configuration, accumulator, localizationContext);
   }
 
   /**
@@ -951,6 +959,27 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         addError(accumulator, BLOCK_DURATION_MINUTES, localizationContext,
             null, INVALID_BLOCK_DURATION_MINUTES_MSG, blockDurationMinutes);
       }
+    }
+  }
+
+
+  /**
+   * Validates that only one user data property was used, if any.
+   *
+   * @param configuration       the configuration to be validated
+   * @param accumulator         the exception condition accumulator
+   * @param localizationContext the localization context
+   */
+  @VisibleForTesting
+  void checkUserData(Configured configuration,
+      PluginExceptionConditionAccumulator accumulator,
+      LocalizationContext localizationContext) {
+
+    String userData = configuration.getConfigurationValue(USER_DATA, localizationContext);
+    String userDataUnencoded = configuration.getConfigurationValue(USER_DATA_UNENCODED, localizationContext);
+    if (userData != null && userDataUnencoded != null) {
+      addError(accumulator, USER_DATA, localizationContext,
+          null, BOTH_USER_DATA_USED);
     }
   }
 

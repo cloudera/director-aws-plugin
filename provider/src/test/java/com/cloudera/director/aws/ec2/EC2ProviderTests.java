@@ -31,7 +31,6 @@ import com.amazonaws.services.ec2.model.DescribeInstanceStatusResult;
 import com.amazonaws.services.ec2.model.DescribeInstancesRequest;
 import com.amazonaws.services.ec2.model.DescribeInstancesResult;
 import com.amazonaws.services.ec2.model.EbsBlockDevice;
-import com.amazonaws.services.ec2.model.Filter;
 import com.amazonaws.services.ec2.model.Image;
 import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.InstanceState;
@@ -41,6 +40,7 @@ import com.amazonaws.services.ec2.model.Reservation;
 import com.amazonaws.services.ec2.model.RunInstancesRequest;
 import com.amazonaws.services.ec2.model.RunInstancesResult;
 import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.ec2.model.TagSpecification;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.kms.AWSKMSClient;
 import com.cloudera.director.aws.AWSFilters;
@@ -72,8 +72,9 @@ import java.util.Map;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 
-import org.assertj.core.util.Sets;
 import org.junit.Test;
+import org.mockito.invocation.InvocationOnMock;
+import org.mockito.stubbing.Answer;
 
 public class EC2ProviderTests {
 
@@ -107,9 +108,22 @@ public class EC2ProviderTests {
     when(ec2Client.describeImages(any(DescribeImagesRequest.class)))
         .thenReturn(makeDescribeImagesResult());
 
-    Future<RunInstancesResult> result1 = makeRunInstancesResult("4i", "4v", InstanceStateName.Running, "192.0.2.4");
-    Future<RunInstancesResult> result2 = makeRunInstancesResult("5i", "5v", InstanceStateName.Running, "192.0.2.5");
-    when(ec2Client.runInstancesAsync(any(RunInstancesRequest.class))).thenReturn(result1, result2);
+    when(ec2Client.runInstancesAsync(any(RunInstancesRequest.class))).then(new Answer<Future<RunInstancesResult>>() {
+      @Override
+      public Future<RunInstancesResult> answer(InvocationOnMock invocation) throws Throwable {
+
+        List<Tag> allTags =
+            tagSpecificationsToTags(((RunInstancesRequest) invocation.getArguments()[0]).getTagSpecifications());
+
+        if (tagsContainsVirtualInstanceId(allTags, "4v")) {
+          return makeRunInstancesResult("4i", "4v", InstanceStateName.Running, "192.0.2.4");
+        } else if (tagsContainsVirtualInstanceId(allTags, "5v")) {
+          return makeRunInstancesResult("5i", "5v", InstanceStateName.Running, "192.0.2.5");
+        }
+
+        return null;
+      }
+    });
 
     when(ec2Client.describeInstanceStatus(makeDescribeInstanceStatusRequest("1i")))
         .thenReturn(makeDescribeInstanceStatusResult("1i", InstanceStateName.Running));
@@ -129,13 +143,26 @@ public class EC2ProviderTests {
   public void testAllocateSomeTerminateWhileWaitingForIp() throws ExecutionException, InterruptedException {
     EC2Provider ec2Provider = getTestEc2Provider();
 
-    when(ec2Client.describeInstances(new DescribeInstancesRequest()
-        .withFilters(new Filter().withName("tag:" + ec2Provider.ec2TagHelper.getClouderaDirectorIdTagName())
-            .withValues("1v", "2v", "3v", "4v", "5v", "6v"))))
-        .thenReturn(makeDescribeInstancesResult(
-            makeInstance("1i", "1v", InstanceStateName.Running, "192.0.2.1"),
-            makeInstance("2i", "2v", InstanceStateName.Running, "192.0.2.2"),
-            makeInstance("3i", "3v", InstanceStateName.Running, "192.0.2.3")));
+    when(ec2Client.describeInstances(any(DescribeInstancesRequest.class)))
+        .thenAnswer(new Answer<DescribeInstancesResult>() {
+          @Override
+          public DescribeInstancesResult answer(InvocationOnMock invocation) throws Throwable {
+            DescribeInstancesRequest request = (DescribeInstancesRequest) invocation.getArguments()[0];
+
+            if (!request.getFilters().isEmpty()) {
+              return makeDescribeInstancesResult(
+                  makeInstance("1i", "1v", InstanceStateName.Running, "192.0.2.1"),
+                  makeInstance("2i", "2v", InstanceStateName.Running, "192.0.2.2"),
+                  makeInstance("3i", "3v", InstanceStateName.Running, "192.0.2.3"));
+            } else if (!request.getInstanceIds().isEmpty()) {
+              return makeDescribeInstancesResult(
+                  makeInstance("5i", "5v", InstanceStateName.Terminated, null),
+                  makeInstance("6i", "6v", InstanceStateName.Terminated, null));
+            }
+
+            return null;
+          }
+        });
 
     when(ec2Client.describeInstanceAttribute(any(DescribeInstanceAttributeRequest.class)))
         .thenThrow(new AmazonServiceException("dummyException"));
@@ -143,10 +170,24 @@ public class EC2ProviderTests {
     when(ec2Client.describeImages(any(DescribeImagesRequest.class)))
         .thenReturn(makeDescribeImagesResult());
 
-    Future<RunInstancesResult> result1 = makeRunInstancesResult("4i", "4v", InstanceStateName.Running, "192.0.2.4");
-    Future<RunInstancesResult> result2 = makeRunInstancesResult("5i", "5v", InstanceStateName.Running, null);
-    Future<RunInstancesResult> result3 = makeRunInstancesResult("6i", "6v", InstanceStateName.Running, null);
-    when(ec2Client.runInstancesAsync(any(RunInstancesRequest.class))).thenReturn(result1, result2, result3);
+    when(ec2Client.runInstancesAsync(any(RunInstancesRequest.class))).then(new Answer<Future<RunInstancesResult>>() {
+      @Override
+      public Future<RunInstancesResult> answer(InvocationOnMock invocation) throws Throwable {
+
+        List<Tag> allTags =
+            tagSpecificationsToTags(((RunInstancesRequest) invocation.getArguments()[0]).getTagSpecifications());
+
+        if (tagsContainsVirtualInstanceId(allTags, "4v")) {
+          return makeRunInstancesResult("4i", "4v", InstanceStateName.Running, "192.0.2.4");
+        } else if (tagsContainsVirtualInstanceId(allTags, "5v")) {
+          return makeRunInstancesResult("5i", "5v", InstanceStateName.Running, null);
+        } else if (tagsContainsVirtualInstanceId(allTags, "6v")) {
+          return makeRunInstancesResult("6i", "6v", InstanceStateName.Running, null);
+        }
+
+        return null;
+      }
+    });
 
     when(ec2Client.describeInstanceStatus(makeDescribeInstanceStatusRequest("1i")))
         .thenReturn(makeDescribeInstanceStatusResult("1i", InstanceStateName.Running));
@@ -160,13 +201,6 @@ public class EC2ProviderTests {
         .thenReturn(makeDescribeInstanceStatusResult("5i", InstanceStateName.Running));
     when(ec2Client.describeInstanceStatus(makeDescribeInstanceStatusRequest("6i")))
         .thenReturn(makeDescribeInstanceStatusResult("6i", InstanceStateName.Running));
-
-    when(ec2Client.describeInstances(new DescribeInstancesRequest()
-        .withInstanceIds(Sets.newHashSet(Lists.newArrayList("5i", "6i")))))
-        .thenReturn(makeDescribeInstancesResult(
-            makeInstance("5i", "5v", InstanceStateName.Terminated, null),
-            makeInstance("6i", "6v", InstanceStateName.Terminated, null)
-        ));
 
     assertThat(ec2Provider.allocate(TEST_TEMPLATE, Lists.newArrayList("1v", "2v", "3v", "4v", "5v", "6v"), 1))
         .hasSize(4);
@@ -203,8 +237,8 @@ public class EC2ProviderTests {
         any(LocalizationContext.class), anyBoolean())).thenReturn(kmsClient);
 
     return new EC2Provider(new SimpleConfiguration(), ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
-        virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules, ec2ClientProvider,
-        identityClientProvider, kmsClientProvider, LOCALIZATION_CONTEXT);
+        virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
+        ec2ClientProvider, identityClientProvider, kmsClientProvider, true, LOCALIZATION_CONTEXT);
   }
 
   private DescribeInstancesResult makeDescribeInstancesResult(Instance... instances) {
@@ -268,5 +302,17 @@ public class EC2ProviderTests {
             .withInstances(makeInstance(instanceId, virtualInstanceId, stateName, ipAddress))));
 
     return mockFuture;
+  }
+
+  private List<Tag> tagSpecificationsToTags(List<TagSpecification> tagSpecifications) {
+    List<Tag> allTags = Lists.newArrayList();
+    for (TagSpecification tagSpecification : tagSpecifications) {
+      allTags.addAll(tagSpecification.getTags());
+    }
+    return allTags;
+  }
+
+  private boolean tagsContainsVirtualInstanceId(List<Tag> tags, String virtualInstanceId) {
+    return tags.contains(new Tag(Tags.ResourceTags.CLOUDERA_DIRECTOR_ID.getTagKey(), virtualInstanceId));
   }
 }

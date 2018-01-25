@@ -35,6 +35,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA_UNENCODED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 
 import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
@@ -47,8 +48,10 @@ import com.cloudera.director.spi.v2.util.ConfigurationPropertiesUtil;
 import com.google.common.base.Optional;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
+import com.google.common.io.BaseEncoding;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
 
@@ -57,6 +60,11 @@ import java.util.Map;
  */
 @SuppressWarnings("PMD.TooManyStaticImports")
 public class EC2InstanceTemplate extends ComputeInstanceTemplate {
+
+  /**
+   * A base 64 encoder for user data.
+   */
+  private static final BaseEncoding BASE64 = BaseEncoding.base64();
 
   /**
    * A splitter for comma-separated lists.
@@ -444,6 +452,12 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "m4.4xlarge",
             "m4.10xlarge",
             "m4.16xlarge",
+            "m5.large",
+            "m5.xlarge",
+            "m5.2xlarge",
+            "m5.4xlarge",
+            "m5.12xlarge",
+            "m5.24xlarge",
             "c3.large",
             "c3.xlarge",
             "c3.2xlarge",
@@ -454,6 +468,12 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "c4.2xlarge",
             "c4.4xlarge",
             "c4.8xlarge",
+            "c5.large",
+            "c5.xlarge",
+            "c5.2xlarge",
+            "c5.4xlarge",
+            "c5.9xlarge",
+            "c5.18xlarge",
             "g2.2xlarge",
             "g2.8xlarge",
             "p2.xlarge",
@@ -482,6 +502,10 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "i3.4xlarge",
             "i3.8xlarge",
             "i3.16xlarge",
+            "h1.2xlarge",
+            "h1.4xlarge",
+            "h1.8xlarge",
+            "h1.16xlarge",
             "hs1.8xlarge",
             "d2.xlarge",
             "d2.2xlarge",
@@ -492,7 +516,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .build()),
 
     /**
-     * The user data.
+     * The user data, base64 encoded. Mutually exclusive with {@link #USER_DATA_UNENCODED}.
      *
      * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html">Instance Metadata and User Data</a>
      */
@@ -502,7 +526,23 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .required(false)
         .widget(ConfigurationProperty.Widget.TEXT)
         .defaultDescription(
-            "The user data.<br />" +
+            "The user data, base64 encoded.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html'>More Information</a>"
+        )
+        .build()),
+
+    /**
+     * The user data, unencoded. Mutually exclusive with {@link #USER_DATA}.
+     *
+     * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html">Instance Metadata and User Data</a>
+     */
+    USER_DATA_UNENCODED(new SimpleConfigurationPropertyBuilder()
+        .configKey("userDataUnencoded")
+        .name("User data (unencoded)")
+        .required(false)
+        .widget(ConfigurationProperty.Widget.TEXT)
+        .defaultDescription(
+            "The user data, unencoded.<br />" +
                 "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html'>More Information</a>"
         )
         .build());
@@ -633,7 +673,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final Optional<Integer> blockDurationMinutes;
 
   /**
-   * The user data.
+   * The user data, base64 encoded.
    */
   private final Optional<String> userData;
 
@@ -699,7 +739,15 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         : Optional.<Integer>absent();
 
     this.userData =
-        Optional.fromNullable(getConfigurationValue(USER_DATA, localizationContext));
+        Optional.fromNullable(getConfigurationValue(USER_DATA, localizationContext))
+            .or(Optional.fromNullable(base64Encode(getConfigurationValue(USER_DATA_UNENCODED, localizationContext))));
+  }
+
+  private final String base64Encode(String s) {
+    if (s == null) {
+      return null;
+    }
+    return BASE64.encode(s.getBytes(StandardCharsets.UTF_8));
   }
 
   /**
@@ -890,9 +938,9 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   }
 
   /**
-   * Returns the user data.
+   * Returns the user data, base64 encoded.
    *
-   * @return the user data
+   * @return the user data, base64 encoded
    */
   public Optional<String> getUserData() {
     return userData;

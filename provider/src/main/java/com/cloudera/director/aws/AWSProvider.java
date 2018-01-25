@@ -14,6 +14,7 @@
 
 package com.cloudera.director.aws;
 
+import static com.google.common.base.MoreObjects.firstNonNull;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.amazonaws.ClientConfiguration;
@@ -79,13 +80,17 @@ public class AWSProvider extends AbstractCloudProvider {
   /**
    * Returns the provider chain for the specified configuration.
    *
+   * @param stsRoles                 the STS roles
    * @param configuration            the configuration
    * @param cloudLocalizationContext the parent cloud localization context
    * @return the provider chain for the specified configuration
    */
-  protected static AWSCredentialsProvider getCredentialsProvider(Configured configuration,
+  protected static AWSCredentialsProvider getCredentialsProvider(
+      STSRoles stsRoles,
+      Configured configuration,
       LocalizationContext cloudLocalizationContext) {
-    return new AWSCredentialsProviderChainProvider()
+    stsRoles = firstNonNull(stsRoles, STSRoles.DEFAULT);
+    return new AWSCredentialsProviderChainProvider(stsRoles.getRoleConfigurations())
         .createCredentials(configuration, cloudLocalizationContext);
   }
 
@@ -170,6 +175,11 @@ public class AWSProvider extends AbstractCloudProvider {
   private final AmazonRDSClientProvider amazonRDSClientProvider;
 
   /**
+   * Whether to use tag on create.
+   */
+  private final boolean useTagOnCreate;
+
+  /**
    * Creates an AWS provider with the specified parameters.
    *
    * @param configuration                the configuration
@@ -184,6 +194,8 @@ public class AWSProvider extends AbstractCloudProvider {
    * @param awsTimeouts                  the AWS timeouts
    * @param customTagMappings            the custom tag mappings
    * @param networkRules                 the network rules
+   * @param stsRoles                     the STS roles
+   * @param useTagOnCreate               whether to use tag on create
    * @param rootLocalizationContext      the root localization context
    */
   public AWSProvider(Configured configuration,
@@ -197,13 +209,15 @@ public class AWSProvider extends AbstractCloudProvider {
       AWSTimeouts awsTimeouts,
       CustomTagMappings customTagMappings,
       NetworkRules networkRules,
+      STSRoles stsRoles,
+      boolean useTagOnCreate,
       LocalizationContext rootLocalizationContext) {
     this(configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints, rdsEncryptionInstanceClasses,
         awsClientConfig,
         awsFilters, awsTimeouts, customTagMappings, networkRules,
-        getCredentialsProvider(configuration, METADATA.getLocalizationContext(rootLocalizationContext)),
-        rootLocalizationContext);
+        getCredentialsProvider(stsRoles, configuration, METADATA.getLocalizationContext(rootLocalizationContext)),
+        useTagOnCreate, rootLocalizationContext);
   }
 
   /**
@@ -222,6 +236,7 @@ public class AWSProvider extends AbstractCloudProvider {
    * @param customTagMappings            the custom tag mappings
    * @param networkRules                 the network rules
    * @param credentialsProvider          the AWS credentials provider
+   * @param useTagOnCreate               whether to use tag on create
    * @param rootLocalizationContext      the root localization context
    */
   @SuppressWarnings({"PMD.UnusedFormalParameter", "UnusedParameters"})
@@ -239,6 +254,7 @@ public class AWSProvider extends AbstractCloudProvider {
       CustomTagMappings customTagMappings,
       NetworkRules networkRules,
       AWSCredentialsProvider credentialsProvider,
+      boolean useTagOnCreate,
       LocalizationContext rootLocalizationContext) {
     super(METADATA, rootLocalizationContext);
     this.credentialsProvider =
@@ -254,6 +270,7 @@ public class AWSProvider extends AbstractCloudProvider {
     this.awsTimeouts = checkNotNull(awsTimeouts, "awsTimeouts is null");
     this.customTagMappings = checkNotNull(customTagMappings, "customTagMappings is null");
     this.networkRules = checkNotNull(networkRules, "networkRules is null");
+    this.useTagOnCreate = useTagOnCreate;
 
     this.amazonEC2ClientProvider = new AmazonEC2ClientProvider(
         this.credentialsProvider, this.clientConfiguration);
@@ -312,7 +329,7 @@ public class AWSProvider extends AbstractCloudProvider {
     return new EC2Provider(target, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
         amazonEC2ClientProvider, amazonIdentityManagementClientProvider, awskmsClientProvider,
-        localizationContext);
+        useTagOnCreate, localizationContext);
   }
 
   /**

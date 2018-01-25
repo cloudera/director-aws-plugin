@@ -27,8 +27,6 @@ import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Function;
 import com.google.common.base.Functions;
 import com.google.common.base.Optional;
 import com.google.common.collect.Lists;
@@ -40,8 +38,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-
-import javax.annotation.Nonnull;
+import java.util.Set;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,7 +54,7 @@ import org.springframework.core.env.PropertyResolver;
  * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html">Block Device Mapping</a>
  */
 @SuppressWarnings("PMD.TooManyStaticImports")
-public class EphemeralDeviceMappings implements Function<String, List<BlockDeviceMapping>> {
+public class EphemeralDeviceMappings {
 
   private static final Logger LOG = LoggerFactory.getLogger(EphemeralDeviceMappings.class);
 
@@ -252,11 +249,11 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
    * the given instance type.
    *
    * @param instanceType EC2 instance type
+   * @param excludeDeviceNames set of device names that shouldn't be used for the block device mappings
    * @return list of block device mappings
    * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html">Block Device Mapping</a>
    */
-  @Nonnull
-  public List<BlockDeviceMapping> apply(String instanceType) {
+  List<BlockDeviceMapping> getBlockDeviceMappings(String instanceType, Set<String> excludeDeviceNames) {
     checkNotNull(instanceType, "instanceType is null");
 
     Optional<Integer> optCount = getCount(instanceType);
@@ -274,7 +271,7 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
     List<String> deviceNames = deviceNameUtils.getDeviceNames(
         ephemeralDeviceMappingsConfigProperties.getDeviceNamePrefix(),
         ephemeralDeviceMappingsConfigProperties.getRangeStart(),
-        count);
+        count, excludeDeviceNames);
 
     List<BlockDeviceMapping> result = Lists.newArrayListWithExpectedSize(count);
     int index = 0;
@@ -288,23 +285,14 @@ public class EphemeralDeviceMappings implements Function<String, List<BlockDevic
     return result;
   }
 
+  public List<BlockDeviceMapping> getBlockDeviceMappings(String instanceType) {
+    return getBlockDeviceMappings(instanceType, Collections.<String>emptySet());
+  }
+
   private Optional<Integer> getCount(String instanceType) {
     return Optional.fromNullable(
         ephemeralDeviceMappingsResolver.getProperty(instanceType, Integer.class)
     );
-  }
-
-  @VisibleForTesting
-  List<String> getLinuxDeviceNames(String instanceType) {
-    Optional<Integer> count = getCount(instanceType);
-    if (!count.isPresent() || count.get() == 0) {
-      return Collections.emptyList();
-    }
-
-    return deviceNameUtils.getDeviceNames(
-        EphemeralDeviceMappingsConfigProperties.DEFAULT_DEVICE_NAME_PREFIX,
-        EphemeralDeviceMappingsConfigProperties.DEFAULT_RANGE_START_FOR_EPHEMERAL_DRIVES,
-        count.get());
   }
 
   /**

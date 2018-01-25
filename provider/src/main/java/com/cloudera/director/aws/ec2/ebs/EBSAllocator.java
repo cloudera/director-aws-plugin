@@ -23,6 +23,7 @@ import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.AttachVolumeRequest;
+import com.amazonaws.services.ec2.model.CreateTagsRequest;
 import com.amazonaws.services.ec2.model.CreateVolumeRequest;
 import com.amazonaws.services.ec2.model.CreateVolumeResult;
 import com.amazonaws.services.ec2.model.DeleteVolumeRequest;
@@ -106,6 +107,8 @@ public class EBSAllocator {
   private final long attachTimeoutSeconds;
   private final EC2TagHelper ec2TagHelper;
   private final EBSDeviceMappings ebsDeviceMappings;
+  private final Set<String> excludeDeviceNames;
+  private final boolean useTagOnCreate;
 
   /**
    * Constructs a new EBS allocator instance.
@@ -113,9 +116,12 @@ public class EBSAllocator {
    * @param client       a pre-configured ec2 client
    * @param awsTimeouts  the AWS timeouts
    * @param ec2TagHelper the custom tag mappings
+   * @param ebsDeviceMappings helper object to retrieve device mappings
+   * @param excludeDeviceNames set of device names that should be excluded when attaching the volumes
    */
   public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts,
-      EC2TagHelper ec2TagHelper, EBSDeviceMappings ebsDeviceMappings) {
+      EC2TagHelper ec2TagHelper, EBSDeviceMappings ebsDeviceMappings,
+      Set<String> excludeDeviceNames, boolean useTagOnCreate) {
     checkNotNull(awsTimeouts, "awsTimeouts is null");
 
     this.client = checkNotNull(client, "ec2 client is null");
@@ -125,6 +131,8 @@ public class EBSAllocator {
         awsTimeouts.getTimeout(TIMEOUT_ATTACH).or(DEFAULT_TIMEOUT_SECONDS);
     this.ec2TagHelper = checkNotNull(ec2TagHelper, "ec2TagHelper is null");
     this.ebsDeviceMappings = checkNotNull(ebsDeviceMappings, "ebsDeviceMappings is null");
+    this.excludeDeviceNames = checkNotNull(excludeDeviceNames, "excludeDeviceNames is null");
+    this.useTagOnCreate = useTagOnCreate;
   }
 
   /**
@@ -396,30 +404,38 @@ public class EBSAllocator {
    * Goes through a list of {@code InstanceEbsVolumes} and attaches all AVAILABLE
    * volumes to its associated instance. If an instance has any volume that isn't
    * in the AVAILABLE stage, all volumes for that instance will skip tagging and
-   * attachment steps.
+   * attachment steps. If useTagOnCreate is false, the volumes will be tagged as well.
    *
    * @param template               the instance template
    * @param instanceEbsVolumesList a list of instances with their associated volumes
    * @throws InterruptedException if the operation is interrupted
    */
-  public List<InstanceEbsVolumes> attachVolumes(EC2InstanceTemplate template,
+  public List<InstanceEbsVolumes> attachAndOptionallyTagVolumes(EC2InstanceTemplate template,
       List<InstanceEbsVolumes> instanceEbsVolumesList) throws InterruptedException {
 
     Set<String> requestedAttachments = Sets.newHashSet();
     DateTime timeout = DateTime.now().plus(availableTimeoutSeconds);
 
     for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
+      String virtualInstanceId = instanceEbsVolumes.getVirtualInstanceId();
       String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
 
       if (!instanceHasAllVolumesWithStatus(instanceEbsVolumes, InstanceEbsVolumes.Status.AVAILABLE)) {
         continue;
       }
 
+      // Pre-compute user-defined tags for efficiency
+      List<Tag> userDefinedTags = ec2TagHelper.getUserDefinedTags(template);
+
       Map<String, InstanceEbsVolumes.Status> volumes = instanceEbsVolumes.getVolumeStatuses();
-      List<String> deviceNames = ebsDeviceMappings.getDeviceNames(volumes.size());
+      List<String> deviceNames = ebsDeviceMappings.getDeviceNames(volumes.size(), excludeDeviceNames);
 
       int index = 0;
       for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
+        if (!useTagOnCreate) {
+          tagVolume(template, userDefinedTags, virtualInstanceId, volumeId);
+        }
+
         String deviceName = deviceNames.get(index);
         final AttachVolumeRequest volumeRequest = new AttachVolumeRequest()
             .withVolumeId(volumeId)
@@ -607,6 +623,23 @@ public class EBSAllocator {
     LOG.error("Timed out while waiting for all volumes to be attached, {} out of {} volumes were attached",
         attachedVolumes.size(), volumeIds.size());
     return attachedVolumes;
+  }
+
+  /**
+   * Tags an EBS volume. Expects that the volume already exists or is in the process of
+   * being created.
+   *
+   * @param template          the instance template
+   * @param userDefinedTags   the user-defined tags
+   * @param virtualInstanceId the virtual instance id of it's associated instance
+   * @param volumeId          the volume id
+   * @throws InterruptedException if the operation is interrupted
+   */
+  public void tagVolume(EC2InstanceTemplate template, List<Tag> userDefinedTags,
+                        String virtualInstanceId, String volumeId) throws InterruptedException {
+    LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
+    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+    client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
   }
 
   /**

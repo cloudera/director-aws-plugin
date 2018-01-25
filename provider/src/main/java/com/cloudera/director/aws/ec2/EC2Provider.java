@@ -22,6 +22,7 @@ import static com.cloudera.director.aws.ec2.EC2Retryer.NOT_FOUND;
 import static com.cloudera.director.aws.ec2.EC2Retryer.retryUntil;
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_JCE_PRIVATE_KEY;
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.SSH_JCE_PUBLIC_KEY;
+import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.collect.Iterables.getOnlyElement;
 import static java.util.Objects.requireNonNull;
 
@@ -245,7 +246,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   /**
    * Instance limit exceeded failure string.
    */
-  private static final String INSTANCE_LIMIT_EXCEEDED = "InstanceLimitExceeded";
+  @VisibleForTesting
+  static final String INSTANCE_LIMIT_EXCEEDED = "InstanceLimitExceeded";
 
   /**
    * Request limit exceeded failure string.
@@ -260,12 +262,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   /**
    * Volume limit exceeded failure string.
    */
-  private static final String VOLUME_LIMIT_EXCEEDED = "VolumeLimitExceeded";
-
-  /**
-   * Unknown reason for instance state transition.
-   */
-  private static final String UNKNOWN = "unknown";
+  @VisibleForTesting
+  static final String VOLUME_LIMIT_EXCEEDED = "Client.VolumeLimitExceeded";
 
   /**
    * Instance ID not found failure string. This may indicate an eventual consistency issue.
@@ -533,9 +531,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
   private final ConfigurationValidator resourceTemplateConfigurationValidator;
 
-  private final EBSAllocator ebsAllocator;
-
   private final ConsoleOutputExtractor consoleOutputExtractor;
+
+  private final AWSTimeouts awsTimeouts;
+
+  private final boolean useTagOnCreate;
 
   /**
    * Construct a new provider instance and validate all configurations.
@@ -569,6 +569,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       AmazonEC2ClientProvider clientProvider,
       AmazonIdentityManagementClientProvider identityManagementClientProvider,
       AWSKMSClientProvider kmsClientProvider,
+      boolean useTagOnCreate,
       LocalizationContext cloudLocalizationContext) {
 
     super(configuration, METADATA, cloudLocalizationContext);
@@ -616,6 +617,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     this.waitUntilFindableMillis =
         awsTimeouts.getTimeout(INSTANCE_WAIT_UNTIL_FINDABLE_MS).or(DEFAULT_INSTANCE_WAIT_UNTIL_FINDABLE_MS);
 
+    this.awsTimeouts = awsTimeouts;
+
     this.resourceTemplateConfigurationValidator =
         new CompositeConfigurationValidator(
             METADATA.getResourceTemplateConfigurationValidator(),
@@ -623,9 +626,9 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             new EC2NetworkValidator(this)
         );
 
-    this.ebsAllocator = new EBSAllocator(this.client, awsTimeouts, ec2TagHelper, ebsDeviceMappings);
-
     this.consoleOutputExtractor = new ConsoleOutputExtractor();
+
+    this.useTagOnCreate = useTagOnCreate;
   }
 
   public AmazonEC2Client getClient() {
@@ -835,12 +838,18 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     boolean success = false;
 
+    Image image =  getImage(template.getImage());
+    Set<String> existingDeviceNames = getExistingDeviceNames(image.getBlockDeviceMappings());
+
+    EBSAllocator ebsAllocator = new EBSAllocator(this.client, this.awsTimeouts, ec2TagHelper, ebsDeviceMappings,
+        existingDeviceNames, useTagOnCreate);
+
     BiMap<String, String> instanceIdPairs = getEC2InstanceIdsByVirtualInstanceId(virtualInstanceIds);
     List<InstanceEbsVolumes> instanceVolumes = ebsAllocator.createVolumes(template, instanceIdPairs);
 
     try {
       instanceVolumes = ebsAllocator.waitUntilVolumesAvailable(instanceVolumes);
-      instanceVolumes = ebsAllocator.attachVolumes(template, instanceVolumes);
+      instanceVolumes = ebsAllocator.attachAndOptionallyTagVolumes(template, instanceVolumes);
       ebsAllocator.addDeleteOnTerminationFlag(instanceVolumes);
 
       int successfulInstances = getSuccessfulInstanceCount(instanceVolumes);
@@ -1275,6 +1284,18 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     return null;
   }
 
+  private Map<String, String> toExceptionInfoMap(String message, AmazonServiceException ex) {
+    return toExceptionInfoMap(message, ex.getErrorCode(), ex.getErrorMessage());
+  }
+
+  private Map<String, String> toExceptionInfoMap(String message, String awsErrorCode, String awsErrorMessage) {
+    return ImmutableMap.of(
+        "message", message,
+        "awsErrorCode", awsErrorCode,
+        "awsErrorMessage", awsErrorMessage
+    );
+  }
+
   /**
    * Atomically allocates multiple regular EC2 instances with the specified identifiers based on a
    * single instance template. If not all the instances can be allocated, the number of instances
@@ -1297,6 +1318,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     boolean success = false;
     Map<String, Instance> virtualInstanceIdToInstances = Maps.newHashMapWithExpectedSize(virtualInstanceIds.size());
+    Map<String, Instance> unsuccessfulInstances = Maps.newHashMap();
 
     try {
       // Try to find all instances that are not in a terminal state
@@ -1323,78 +1345,144 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
       LOG.info(">> Building {} instance requests", unallocatedInstanceIds.size());
 
-      Map<String, Future<RunInstancesResult>> runInstanceRequests = Maps.newHashMap();
-      for (String virtualInstanceId : unallocatedInstanceIds) {
-        runInstanceRequests.put(virtualInstanceId, client.runInstancesAsync(
-            newRunInstancesRequest(template, virtualInstanceId, userDefinedTags)));
-      }
-
-      LOG.info(">> Submitted {} run instance requests.", runInstanceRequests.size());
+      Map<String, AmazonServiceException> encounteredAmazonExceptions = Maps.newHashMap();
+      // These will only be used for tag on create
+      int instancesFailedForInsufficientCapacity = 0;
       int instancesFailedForInstanceLimitExceeded = 0;
       int instancesFailedForRequestLimitExceeded = 0;
-      int instancesFailedFlippingToRunning = 0;
 
-      UnrecoverableProviderException ex = null;
-      for (Entry<String, Future<RunInstancesResult>> runInstanceRequest : runInstanceRequests.entrySet()) {
-        try {
-          RunInstancesResult result = runInstanceRequest.getValue().get();
-          runInstancesResults.add(result);
-          virtualInstanceIdToInstances.put(
-              runInstanceRequest.getKey(),
-              getOnlyElement(result.getReservation().getInstances()));
+      if (useTagOnCreate) {
+        Map<String, Future<RunInstancesResult>> runInstanceRequests = Maps.newHashMap();
+        for (String virtualInstanceId : unallocatedInstanceIds) {
+          runInstanceRequests.put(virtualInstanceId, client.runInstancesAsync(
+              newRunInstancesRequest(template, virtualInstanceId, userDefinedTags)));
+        }
 
-        } catch (ExecutionException e) {
-          if (e.getCause() instanceof AmazonServiceException) {
-            AmazonServiceException awsException = (AmazonServiceException) e.getCause();
+        LOG.info(">> Submitted {} run instance requests.", runInstanceRequests.size());
+        UnrecoverableProviderException ex = null;
 
-            try {
-              AWSExceptions.propagateIfUnrecoverable(awsException);
-            } catch (UnrecoverableProviderException ue) {
-              if (ex == null) {
-                ex = ue;
-              } else {
-                ex.addSuppressed(ue);
+        // Map of encountered AWS exceptions where key is the AWS error code, which we may propagate
+        // later. It should be sufficient to just keep track of one exception per error code.
+
+        for (Entry<String, Future<RunInstancesResult>> runInstanceRequest : runInstanceRequests.entrySet()) {
+          String virtualInstanceId = runInstanceRequest.getKey();
+          try {
+            RunInstancesResult result = runInstanceRequest.getValue().get();
+            runInstancesResults.add(result);
+            virtualInstanceIdToInstances.put(
+                virtualInstanceId,
+                getOnlyElement(result.getReservation().getInstances()));
+
+          } catch (ExecutionException e) {
+            if (e.getCause() instanceof AmazonServiceException) {
+              AmazonServiceException awsException = (AmazonServiceException) e.getCause();
+
+              try {
+                AWSExceptions.propagateIfUnrecoverable(awsException);
+              } catch (UnrecoverableProviderException ue) {
+                if (ex == null) {
+                  ex = ue;
+                } else {
+                  ex.addSuppressed(ue);
+                }
               }
-            }
 
-            if (INSUFFICIENT_INSTANCE_CAPACITY.equals(awsException.getErrorCode()) ||
-                INSTANCE_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
-              LOG.warn("Instance {} was not allocated due to instance limits or capacity issues. " +
-                  "Checking if we have enough instances to continue.", runInstanceRequest.getKey());
-              ++instancesFailedForInstanceLimitExceeded;
-            } else if (REQUEST_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
-              LOG.warn("Encountered rate limit errors while allocating instance {}. " +
-                  "Checking if we have enough instances to continue.", runInstanceRequest.getKey());
-              ++instancesFailedForRequestLimitExceeded;
-            } else if (VOLUME_LIMIT_EXCEEDED.equals(awsException.getErrorCode())) {
-              LOG.warn("Encountered volume limit errors while allocating instance {}. " +
-                  "Checking if we have enough instances to continue.", runInstanceRequest.getKey());
-              ++instancesFailedFlippingToRunning;
+              // todo update encounteredAmazonExceptions for other exceptions (not just instance limits)
+
+              String awsErrorCode = awsException.getErrorCode();
+              switch (awsErrorCode) {
+                case INSUFFICIENT_INSTANCE_CAPACITY:
+                  LOG.warn("Instance {} was not allocated due to insufficient instance capacity in AWS.",
+                      virtualInstanceId);
+                  ++instancesFailedForInsufficientCapacity;
+                  break;
+                case INSTANCE_LIMIT_EXCEEDED:
+                  LOG.warn("Instance {} was not allocated due to exceeding instance limits on the AWS account.",
+                      virtualInstanceId);
+                  ++instancesFailedForInstanceLimitExceeded;
+                  encounteredAmazonExceptions.put(awsErrorCode, awsException);
+                  break;
+                case REQUEST_LIMIT_EXCEEDED:
+                  LOG.warn("Encountered rate limit errors while allocating instance {}", virtualInstanceId);
+                  ++instancesFailedForRequestLimitExceeded;
+                  break;
+                default:
+                  LOG.error("Exception while trying to allocate instance.", e);
+              }
+
+              LOG.info("Checking if we have enough instances to continue");
+
             } else {
-              LOG.error("Exception while trying to allocate instance.", e);
+              LOG.error("Error while requesting instance {}. Attempting to proceed.", virtualInstanceId);
+              LOG.debug("Exception caught:", e);
             }
-
-          } else {
-            LOG.error("Error while requesting instance {}. Attempting to proceed.", runInstanceRequest.getKey());
-            LOG.debug("Exception caught:", e);
           }
         }
-      }
 
-      if (ex != null) {
-        throw ex;
-      }
+        if (ex != null) {
+          throw ex;
+        }
 
-      if (LOG.isInfoEnabled()) {
-        for (RunInstancesResult runInstancesResult : runInstancesResults) {
-          LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
-              summarizeReservationForLogging(runInstancesResult.getReservation()));
+        if (LOG.isInfoEnabled()) {
+          for (RunInstancesResult runInstancesResult : runInstancesResults) {
+            LOG.info("<< Reservation {} with {}", runInstancesResult.getReservation().getReservationId(),
+                summarizeReservationForLogging(runInstancesResult.getReservation()));
+          }
+        }
+      } else {
+        LOG.info("Tag on create is disabled.");
+
+        RunInstancesResult runInstancesResult = null;
+        int normalizedMinCount = Math.max(1, minCount - virtualInstanceIdToInstances.size());
+        try {
+          // Only allocated what we haven't allocated yet
+          runInstancesResult = client.runInstances(
+              newRunInstanceRequestBulkNoTagOnCreate(template, virtualInstanceIds, normalizedMinCount));
+        } catch (AmazonServiceException e) {
+          AWSExceptions.propagateIfUnrecoverable(e);
+
+          // As documented at http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-capacity.html
+
+          if (INSUFFICIENT_INSTANCE_CAPACITY.equals(e.getErrorCode()) ||
+              INSTANCE_LIMIT_EXCEEDED.equals(e.getErrorCode())) {
+            LOG.warn("Hit instance capacity issues. Attempting to proceed anyway.", e);
+          } else {
+            throw AWSExceptions.propagate(e);
+          }
+        }
+
+        List<Instance> instances = runInstancesResult != null ? runInstancesResult.getReservation().getInstances()
+            : Lists.<Instance>newArrayList();
+
+        // Limit the number of virtual instance id's used for tagging to the
+        // number of instances that we managed to reserve.
+        List<String> virtualInstanceIdsAllocated = FluentIterable
+            .from(virtualInstanceIds)
+            .limit(instances.size())
+            .toList();
+
+
+        for (Map.Entry<String, Instance> entry : zipWith(virtualInstanceIdsAllocated, instances)) {
+
+          String virtualInstanceId = entry.getKey();
+          Instance instance = entry.getValue();
+          String ec2InstanceId = instance.getInstanceId();
+
+          if (tagInstance(template, userDefinedTags, virtualInstanceId, ec2InstanceId,
+              DateTime.now().plus(waitUntilFindableMillis))) {
+            virtualInstanceIdToInstances.put(virtualInstanceId,
+                instance.withTags(ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags)));
+          } else {
+            unsuccessfulInstances.put(virtualInstanceId, instance);
+            LOG.info("<< Instance {} could not be tagged.", ec2InstanceId);
+          }
         }
       }
 
       // Determine which do not yet have a private IP address.
 
       int numInstancesAlive = virtualInstanceIdToInstances.size();
+
       if (numInstancesAlive >= minCount) {
 
         Map<String, Instance> successfulEC2Instances = Maps.newHashMapWithExpectedSize(virtualInstanceIds.size());
@@ -1419,7 +1507,14 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         // Wait until all of them have a private IP (it should be pretty fast)
         successfulEC2Instances.putAll(waitForPrivateIpAddresses(ec2InstancesWithNoPrivateIp));
 
-        instancesFailedFlippingToRunning += numInstancesAlive - successfulEC2Instances.size();
+        for (Entry<String, Instance> entry : virtualInstanceIdToInstances.entrySet()) {
+          String vid = entry.getKey();
+          Instance instance = entry.getValue();
+          if (!successfulEC2Instances.containsKey(vid)) {
+            unsuccessfulInstances.put(vid, instance);
+          }
+        }
+
         numInstancesAlive = successfulEC2Instances.size();
         if (numInstancesAlive >= minCount) {
 
@@ -1439,17 +1534,34 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         }
       }
 
+      PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
+
+      if (instancesFailedForInstanceLimitExceeded != 0) {
+        AmazonServiceException instanceLimitEx = encounteredAmazonExceptions.get(INSTANCE_LIMIT_EXCEEDED);
+        String message = String.format("Exceeded instance limit for instance type %s", template.getType());
+        accumulator.addError(toExceptionInfoMap(message, instanceLimitEx));
+      }
+
+      if (unsuccessfulInstances.size() != 0) {
+        addInstanceStateErrors(template, unsuccessfulInstances.values(), accumulator);
+      }
+
+      if (accumulator.hasError()) {
+        throw new UnrecoverableProviderException(
+            "Problem allocating on-demand instances.",
+            new PluginExceptionDetails(accumulator.getConditionsByKey())
+        );
+      }
+
       LOG.error("Trying to allocate ({}) instances, ({}) instances allocated, below minimum count ({}): " +
-              "({}) instances failed for instance limit exceeded, " +
-              "({}) instances failed for request limit exceeded, " +
-              "({}) instances failed when flipping from Pending to Running, including volume limit exceeded.",
+              "({}) instances failed for insufficient instance capacity, " +
+              "({}) instances failed for request limit exceeded, ",
           instanceCount, numInstancesAlive, minCount,
-          instancesFailedForInstanceLimitExceeded,
-          instancesFailedForRequestLimitExceeded,
-          instancesFailedFlippingToRunning);
+          instancesFailedForInsufficientCapacity,
+          instancesFailedForRequestLimitExceeded);
       return Collections.emptyList();
 
-    } catch (InterruptedException e) {
+    } catch (InterruptedException | UnrecoverableProviderException e) {
       throw e;
     } catch (Exception e) {
       throw new UnrecoverableProviderException("Unexpected problem during instance allocation", e);
@@ -1469,6 +1581,66 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
           LOG.error("Error while trying to delete instances after failed instance allocation.", e);
         }
       }
+    }
+  }
+
+  /**
+   * Takes a collection of instances and extracts termination state reason information. This
+   * information will be added to the specified list of plugin exception conditions.
+   *
+   * @param template the ec2 instance template
+   * @param unsuccessfulInstances collection of instances to check
+   * @param accumulator the accumulator to add exception information
+   */
+  private void addInstanceStateErrors(EC2InstanceTemplate template,
+                                      Collection<Instance> unsuccessfulInstances,
+                                      PluginExceptionConditionAccumulator accumulator) {
+    Set<String> ec2InstanceIds = Sets.newHashSet();
+    for (Instance instance : unsuccessfulInstances) {
+      ec2InstanceIds.add(instance.getInstanceId());
+    }
+
+    DescribeInstancesRequest request = new DescribeInstancesRequest()
+        .withInstanceIds(ec2InstanceIds);
+    DescribeInstancesResult result = client.describeInstances(request);
+
+    List<Reservation> reservations = result.getReservations();
+
+    // Store the state reason error codes in a map to avoid adding duplicate
+    // errors in the accumulator.
+    Map<String, String> stateErrorCodeToMessage = Maps.newHashMap();
+
+    for (Reservation reservation : reservations) {
+      Instance instance = getOnlyElement(reservation.getInstances());
+      InstanceStateName stateName = InstanceStateName.fromValue(instance.getState().getName());
+      if (stateName != InstanceStateName.Terminated &&
+          stateName != InstanceStateName.ShuttingDown) {
+        continue;
+      }
+
+      StateReason stateReason = instance.getStateReason();
+      if (stateReason == null || stateReason.getCode() == null) {
+        LOG.error("Instance {} terminated for unknown reason", instance.getInstanceId());
+        continue;
+      }
+
+      String code = stateReason.getCode();
+      String message = stateReason.getMessage();
+      LOG.error("Instance {} termination reason: ", message);
+      stateErrorCodeToMessage.put(code, message);
+    }
+
+    for (Entry<String, String> entry : stateErrorCodeToMessage.entrySet()) {
+      String stateReasonCode = entry.getKey();
+      String stateReasonMessage = entry.getValue();
+
+      String message = "Instance(s) were unexpectedly terminated";
+      if (stateReasonCode.equals(VOLUME_LIMIT_EXCEEDED)) {
+        message = String.format("Instance(s) were terminated due to volume limits for %s volume type",
+            template.getEbsVolumeType());
+      }
+
+      accumulator.addError(toExceptionInfoMap(message, stateReasonCode, stateReasonMessage));
     }
   }
 
@@ -1568,9 +1740,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             if (currentState.equals(InstanceStateName.Terminated) ||
                 currentState.equals(InstanceStateName.ShuttingDown)) {
               if (LOG.isErrorEnabled()) {
-                LOG.error("Instance {} has unexpectedly terminated, reason {}",
-                    ec2InstanceId,
-                    getInstanceStateReason(ec2InstanceId));
+                LOG.error("Instance {} has unexpectedly terminated", ec2InstanceId);
               }
               return false;
             } else if (!currentState.equals(InstanceStateName.Pending)) {
@@ -1598,33 +1768,52 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   }
 
   /**
-   * Retrieves transition reason for the last state change if any. Returns empty if there is no reason.
-   *
-   * @param ec2InstanceId EC2 instance Id
-   * @return transition reason for the last state change if any. Returns empty if there is no reason.
-   */
-  private String getInstanceStateReason(String ec2InstanceId) {
-    DescribeInstancesRequest request = new DescribeInstancesRequest()
-        .withInstanceIds(Collections.singletonList(ec2InstanceId));
-    DescribeInstancesResult result = client.describeInstances(request);
-
-    Reservation reservation = getOnlyElement(result.getReservations());
-    StateReason stateReason = getOnlyElement(reservation.getInstances()).getStateReason();
-    return stateReason == null ? UNKNOWN : stateReason.getMessage();
-  }
-
-  /**
    * Builds a {@code RunInstancesRequest} starting from a template and a virtual instance ID.
    * Instances will be tagged as they're created.
    *
    * @param template          the instance template
-   * @param virtualInstanceId the virtual instance IDs
+   * @param virtualInstanceId the virtual instance ID
    * @param userDefinedTags   user defined tags to attach to the instance
+   * @return a RunInstancesRequest object
    */
+  @VisibleForTesting
   @SuppressWarnings("ConstantConditions")
   private RunInstancesRequest newRunInstancesRequest(
       EC2InstanceTemplate template, String virtualInstanceId, List<Tag> userDefinedTags) {
 
+    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+    List<TagSpecification> tagSpecifications = Lists.newArrayList(
+        new TagSpecification().withTags(tags).withResourceType(ResourceType.Instance),
+        new TagSpecification().withTags(tags).withResourceType(ResourceType.Volume));
+
+    return newRunInstanceBaseRequest(template)
+        .withMinCount(1)
+        .withMaxCount(1)
+        .withTagSpecifications(tagSpecifications);
+  }
+
+  /**
+   * Builds a {@code RunInstancesRequest} starting from a template and a collection of virtual instance
+   * IDs. Instances will need to be tagged after they're created.
+   *
+   * @param template           the instance template
+   * @param virtualInstanceIds the virtual instance IDs
+   * @param minCount           the minimum number of instances to allocate
+   * @return a RunInstancesRequest object
+   */
+  private RunInstancesRequest newRunInstanceRequestBulkNoTagOnCreate(EC2InstanceTemplate template,
+      Collection<String> virtualInstanceIds, int minCount) {
+    return newRunInstanceBaseRequest(template)
+        .withMaxCount(virtualInstanceIds.size())
+        .withMinCount(minCount);
+  }
+
+  /**
+   * Builds a base {@code RunInstancesRequest} object for other run instance request creation objects to build from.
+   * @param template the instance template
+   * @return a RunInstancesRequest object
+   */
+  private RunInstancesRequest newRunInstanceBaseRequest(EC2InstanceTemplate template) {
     String image = template.getImage();
     String type = template.getType();
 
@@ -1635,19 +1824,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     LOG.info(">> Instance request type: {}, image: {}", type, image);
 
-    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
-    List<TagSpecification> tagSpecifications = Lists.newArrayList(
-        new TagSpecification().withTags(tags).withResourceType(ResourceType.Instance),
-        new TagSpecification().withTags(tags).withResourceType(ResourceType.Volume));
-
     RunInstancesRequest request = new RunInstancesRequest()
         .withImageId(image)
         .withInstanceType(type)
-        .withMaxCount(1)
-        .withMinCount(1)
         .withClientToken(UUID.randomUUID().toString())
         .withNetworkInterfaces(network)
-        .withTagSpecifications(tagSpecifications)
         .withBlockDeviceMappings(deviceMappings)
         .withEbsOptimized(template.isEbsOptimized());
 
@@ -1702,6 +1883,24 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     return network;
   }
 
+  private Image getImage(String imageId) {
+    DescribeImagesResult result = client.describeImages(
+        new DescribeImagesRequest().withImageIds(imageId));
+    if (result.getImages().isEmpty()) {
+      throw new IllegalArgumentException("The description for image " + imageId +
+          " is empty");
+    }
+    return result.getImages().get(0);
+  }
+
+  private Set<String> getExistingDeviceNames(List<BlockDeviceMapping> mappings) {
+    Set<String> existingDeviceNames = Sets.newHashSet();
+    for (BlockDeviceMapping mapping : mappings) {
+      existingDeviceNames.add(mapping.getDeviceName());
+    }
+    return existingDeviceNames;
+  }
+
   /**
    * Creates block device mappings based on the specified instance template.
    *
@@ -1709,15 +1908,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * @return the block device mappings
    */
   private List<BlockDeviceMapping> getBlockDeviceMappings(EC2InstanceTemplate template) {
-
     // Query the AMI about the root device name & mapping information
-    DescribeImagesResult result = client.describeImages(
-        new DescribeImagesRequest().withImageIds(template.getImage()));
-    if (result.getImages().isEmpty()) {
-      throw new IllegalArgumentException("The description for image " + template.getImage() +
-          " is empty");
-    }
-    Image templateImage = result.getImages().get(0);
+    Image templateImage = getImage(template.getImage());
     String rootDeviceType = templateImage.getRootDeviceType();
     if (!DEVICE_TYPE_EBS.equals(rootDeviceType)) {
       throw new IllegalArgumentException("The root device for image " + template.getImage() +
@@ -1738,6 +1930,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
           templateImage.getRootDeviceName());
     }
 
+    Set<String> existingDeviceNames = getExistingDeviceNames(originalMappings);
+
     // The encrypted property was added to the block device mapping in version 1.8 of the SDK.
     // It is a Boolean, but defaults to false instead of being unset, so we set it to null here.
     rootDevice.getEbs().setEncrypted(null);
@@ -1755,13 +1949,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       case NO_EBS_VOLUMES:
         // The volumes within an instance should be homogeneous. So we only add
         // instance store volumes when additional EBS volumes aren't mounted.
-        deviceMappings.addAll(ephemeralDeviceMappings.apply(template.getType()));
+        deviceMappings.addAll(ephemeralDeviceMappings.getBlockDeviceMappings(template.getType(), existingDeviceNames));
         break;
       case AS_INSTANCE_REQUEST:
         LOG.info("EBS volumes will be allocated as part of instance launch request");
         List<BlockDeviceMapping> mappings = ebsDeviceMappings.getBlockDeviceMappings(
             ebsVolumeCount, template.getEbsVolumeType(), template.getEbsVolumeSizeGiB(),
-            template.getEbsIops(), template.isEnableEbsEncryption()
+            template.getEbsIops(), template.isEnableEbsEncryption(), existingDeviceNames
         );
         deviceMappings.addAll(mappings);
         break;
@@ -2086,6 +2280,133 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       throw new UnrecoverableProviderException("Number of tags exceeds the maximum of " +
           MAX_TAGS_ALLOWED);
     }
+  }
+
+  /**
+   * Tags an EC2 instance. Expects that the instance already exists or is in the process of
+   * being created. This may also tag EBS volumes depending on template configurations.
+   *
+   * @param template          the instance template
+   * @param userDefinedTags   the user-defined tags
+   * @param virtualInstanceId the virtual instance id
+   * @param ec2InstanceId     the EC2 instance id
+   * @param timeout           the time point of timeout
+   * @return true if the instance was successfully tagged, false otherwise
+   * @throws InterruptedException if the operation is interrupted
+   */
+  private boolean tagInstance(
+      EC2InstanceTemplate template,
+      List<Tag> userDefinedTags,
+      String virtualInstanceId,
+      final String ec2InstanceId,
+      DateTime timeout)
+      throws InterruptedException {
+    LOG.info(">> Tagging instance {} / {}", ec2InstanceId, virtualInstanceId);
+
+    // Wait for the instance to be started. If it is terminating, skip tagging.
+    try {
+      if (!waitUntilInstanceHasStarted(ec2InstanceId, timeout)) {
+        return false;
+      }
+    } catch (TimeoutException e) {
+      return false;
+    }
+
+    final List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+
+    LOG.info("Tags: {}", tags);
+
+    try {
+      retryUntil(
+          new Callable<Void>() {
+            @Override
+            public Void call() throws Exception {
+              LOG.info("Create tags request.");
+              client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
+              LOG.info("Create tags request complete.");
+              return null;
+            }
+          },
+          timeout);
+    } catch (RetryException e) {
+      LOG.warn("timeout waiting for spot instance {} tagged", ec2InstanceId);
+    } catch (ExecutionException e) {
+      if (AmazonServiceException.class.isInstance(e.getCause())) {
+        AWSExceptions.propagate((AmazonServiceException) e.getCause());
+      }
+      throw new UnrecoverableProviderException(e.getCause());
+    }
+
+    // Tag EBS volumes if they were part of instance launch request
+    if (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST) {
+      tagEbsVolumes(ec2InstanceId, template, virtualInstanceId, tags, timeout);
+    }
+
+    return true;
+  }
+
+  private void tagEbsVolumes(
+      final String ec2InstanceId,
+      EC2InstanceTemplate template,
+      String virtualInstanceId,
+      List<Tag> tags,
+      DateTime timeout)
+      throws InterruptedException {
+    DescribeInstancesResult result;
+    try {
+      result = retryUntil(
+          new Callable<DescribeInstancesResult>() {
+            @Override
+            public DescribeInstancesResult call() throws Exception {
+              DescribeInstancesRequest request = new DescribeInstancesRequest()
+                  .withInstanceIds(Collections.singletonList(ec2InstanceId));
+              return client.describeInstances(request);
+            }
+          },
+          timeout);
+    } catch (RetryException e) {
+      LOG.warn("timeout describing instance {}", ec2InstanceId);
+      return;
+    } catch (ExecutionException e) {
+      if (AmazonServiceException.class.isInstance(e.getCause())) {
+        AWSExceptions.propagate((AmazonServiceException) e.getCause());
+      }
+      throw new UnrecoverableProviderException(e.getCause());
+    }
+
+    List<InstanceBlockDeviceMapping> instanceBlockDeviceMappings =
+        getOnlyElement(getOnlyElement(result.getReservations()).getInstances()).getBlockDeviceMappings();
+    for (InstanceBlockDeviceMapping instanceBlockDeviceMapping : instanceBlockDeviceMappings) {
+      String volumeId = instanceBlockDeviceMapping.getEbs().getVolumeId();
+      tagEbsVolume(template, tags, virtualInstanceId, volumeId);
+    }
+  }
+
+  private void tagEbsVolume(
+      EC2InstanceTemplate template, List<Tag> userDefinedTags, String virtualInstanceId, String volumeId)
+      throws InterruptedException {
+    LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
+    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+    client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
+  }
+
+  /**
+   * <p>Zip two collections as a lazy iterable of pairs.</p>
+   * <p><em>Note:</em> the returned iterable is not suitable for repeated use, since it
+   * exhausts the iterator over the first collection.</p>
+   *
+   * @throws IllegalArgumentException if input collections don't have the same size
+   */
+  private <K, V> Iterable<Map.Entry<K, V>> zipWith(Collection<K> a, Collection<V> b) {
+    checkArgument(a.size() == b.size(), "collections don't have the same size");
+
+    final Iterator<K> iterator = a.iterator();
+    return Iterables.transform(b, new Function<V, Map.Entry<K, V>>() {
+      @Override
+      public Map.Entry<K, V> apply(V input) {
+        return Maps.immutableEntry(iterator.next(), input);
+      }
+    });
   }
 
   /**
@@ -2800,118 +3121,11 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       for (SpotAllocationRecord spotAllocationRecord :
           spotAllocationRecordsByVirtualInstanceId.values()) {
         if ((spotAllocationRecord.ec2InstanceId != null) && !spotAllocationRecord.instanceTagged &&
-            tagSpotInstance(template, userDefinedTags, spotAllocationRecord.virtualInstanceId,
+            tagInstance(template, userDefinedTags, spotAllocationRecord.virtualInstanceId,
                 spotAllocationRecord.ec2InstanceId, timeout)) {
           spotAllocationRecord.instanceTagged = true;
         }
       }
-    }
-
-    /**
-     * Tags an EC2 instance. Expects that the instance already exists or is in the process of
-     * being created. This may also tag EBS volumes depending on template configurations.
-     *
-     * @param template          the instance template
-     * @param userDefinedTags   the user-defined tags
-     * @param virtualInstanceId the virtual instance id
-     * @param ec2InstanceId     the EC2 instance id
-     * @param timeout           the time point of timeout
-     * @return true if the instance was successfully tagged, false otherwise
-     * @throws InterruptedException if the operation is interrupted
-     */
-    private boolean tagSpotInstance(
-        EC2InstanceTemplate template,
-        List<Tag> userDefinedTags,
-        String virtualInstanceId,
-        final String ec2InstanceId,
-        DateTime timeout)
-        throws InterruptedException {
-      LOG.info(">> Tagging instance {} / {}", ec2InstanceId, virtualInstanceId);
-
-      // We have to individually tag the spot instance and it's associated volumes
-      // since AWS doesn't allow specifying tags as part of the launch request for
-      // spot instances.
-
-      // Wait for the instance to be started. If it is terminating, skip tagging.
-      try {
-        if (!waitUntilInstanceHasStarted(ec2InstanceId, timeout)) {
-          return false;
-        }
-      } catch (TimeoutException e) {
-        return false;
-      }
-
-      final List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
-
-      try {
-        retryUntil(
-            new Callable<Void>() {
-              @Override
-              public Void call() throws Exception {
-                client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
-                return null;
-              }
-            },
-            timeout);
-      } catch (RetryException e) {
-        LOG.warn("timeout waiting for spot instance {} tagged", ec2InstanceId);
-      } catch (ExecutionException e) {
-        if (AmazonServiceException.class.isInstance(e.getCause())) {
-          AWSExceptions.propagate((AmazonServiceException) e.getCause());
-        }
-        throw new UnrecoverableProviderException(e.getCause());
-      }
-
-      // Tag EBS volumes if they were part of instance launch request
-      if (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST) {
-        tagSpotEbsVolumes(ec2InstanceId, virtualInstanceId, tags, timeout);
-      }
-
-      return true;
-    }
-
-    private void tagSpotEbsVolumes(
-        final String ec2InstanceId,
-        String virtualInstanceId,
-        List<Tag> tags,
-        DateTime timeout)
-        throws InterruptedException {
-      DescribeInstancesResult result;
-      try {
-        result = retryUntil(
-            new Callable<DescribeInstancesResult>() {
-              @Override
-              public DescribeInstancesResult call() throws Exception {
-                DescribeInstancesRequest request = new DescribeInstancesRequest()
-                    .withInstanceIds(Collections.singletonList(ec2InstanceId));
-                return client.describeInstances(request);
-              }
-            },
-            timeout);
-      } catch (RetryException e) {
-        LOG.warn("timeout describing instance {}", ec2InstanceId);
-        return;
-      } catch (ExecutionException e) {
-        if (AmazonServiceException.class.isInstance(e.getCause())) {
-          AWSExceptions.propagate((AmazonServiceException) e.getCause());
-        }
-        throw new UnrecoverableProviderException(e.getCause());
-      }
-
-      List<InstanceBlockDeviceMapping> instanceBlockDeviceMappings =
-          getOnlyElement(getOnlyElement(result.getReservations()).getInstances()).getBlockDeviceMappings();
-      for (InstanceBlockDeviceMapping instanceBlockDeviceMapping : instanceBlockDeviceMappings) {
-        String volumeId = instanceBlockDeviceMapping.getEbs().getVolumeId();
-        tagSpotEbsVolume(template, tags, virtualInstanceId, volumeId);
-      }
-    }
-
-    private void tagSpotEbsVolume(
-        EC2InstanceTemplate template, List<Tag> userDefinedTags, String virtualInstanceId, String volumeId)
-        throws InterruptedException {
-      LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
-      List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
-      client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
     }
 
     /**

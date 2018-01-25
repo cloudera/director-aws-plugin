@@ -24,15 +24,15 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import com.amazonaws.AmazonServiceException;
+import com.cloudera.director.aws.shaded.com.amazonaws.AmazonServiceException;
+import com.cloudera.director.aws.shaded.org.joda.time.DateTime;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 
-import org.joda.time.DateTime;
 import org.junit.Test;
 
-public class EC2RetryerTests {
+public class EC2RetryerTest {
 
   @Test
   public void testRetrySucceeds() throws Exception {

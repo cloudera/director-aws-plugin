@@ -386,6 +386,10 @@ public final class EC2NetworkValidator implements ConfigurationValidator {
           direction == Direction.INBOUND ? sg.getIpPermissions() : sg.getIpPermissionsEgress();
       for (IpPermission permission : permissions) {
         final String protocol = permission.getIpProtocol();
+        if ("icmp".equalsIgnoreCase(protocol)) {
+          LOG.debug("Skipping check for ICMP permission {}", permission.toString());
+          continue;
+        }
         final Range<Integer> ports = getPortRangeFromSgPermission(permission);
         final List<String> ipRanges = getIpRangesFromSgPermission(permission);
         if (!ipRanges.isEmpty()) {
@@ -465,7 +469,7 @@ public final class EC2NetworkValidator implements ConfigurationValidator {
 
   /**
    * Gets the port range for the TCP and UDP protocols defined in the given security
-   * group rule. If the range contains {@code -1}, it indicates all ports.
+   * group rule.
    *
    * @param permission the given security group rule
    * @return           the port range that this security group rule applies to

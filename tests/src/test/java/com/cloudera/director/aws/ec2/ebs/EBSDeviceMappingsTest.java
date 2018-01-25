@@ -24,6 +24,7 @@ import org.junit.Test;
 
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.BlockDeviceMapping;
 
+import java.util.Collections;
 import java.util.List;
 
 public class EBSDeviceMappingsTest {
@@ -43,8 +44,8 @@ public class EBSDeviceMappingsTest {
     Optional<Integer> iops = Optional.absent();
     boolean encrypted = false;
 
-    List<BlockDeviceMapping> deviceMappings =
-        ebsDeviceMappings.getBlockDeviceMappings(count, volumeType, volumeSizeGib, iops, false);
+    List<BlockDeviceMapping> deviceMappings = ebsDeviceMappings.getBlockDeviceMappings(count, volumeType, volumeSizeGib,
+        iops, false, Collections.<String>emptySet());
 
     String firstDeviceName = EBSDeviceMappings.DEFAULT_EBS_DEVICE_NAME_PREFIX +
         EBSDeviceMappings.DEFAULT_EBS_DEVICE_NAME_START_CHAR;

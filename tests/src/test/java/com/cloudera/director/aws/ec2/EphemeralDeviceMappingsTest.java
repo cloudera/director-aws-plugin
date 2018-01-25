@@ -23,11 +23,14 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.BlockDe
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 import com.google.common.io.Resources;
 
 import java.io.File;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -64,12 +67,12 @@ public class EphemeralDeviceMappingsTest {
 
   @Test
   public void testWithZero() {
-    assertThat(ephemeralDeviceMappings.apply("instancetype0")).isEmpty();
+    assertThat(ephemeralDeviceMappings.getBlockDeviceMappings("instancetype0")).isEmpty();
   }
 
   @Test
   public void testWithNonOverrideBuiltIn() {
-    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.apply("c3.large");
+    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("c3.large");
 
     assertThat(deviceMappings).hasSize(2);
     assertThat(deviceMappings.get(0).getDeviceName()).isEqualTo("/dev/sdb");
@@ -80,8 +83,21 @@ public class EphemeralDeviceMappingsTest {
   }
 
   @Test
+  public void testWithExclude() {
+    Set<String> exclude = Sets.newHashSet("/dev/sdb", "/dev/sdc");
+    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype3", exclude);
+
+    assertThat(deviceMappings).hasSize(3);
+    assertThat(deviceMappings.get(0).getDeviceName()).isEqualTo("/dev/sdd");
+    assertThat(deviceMappings.get(0).getVirtualName()).isEqualTo("ephemeral0");
+
+    assertThat(deviceMappings.get(2).getDeviceName()).isEqualTo("/dev/sdf");
+    assertThat(deviceMappings.get(2).getVirtualName()).isEqualTo("ephemeral2");
+  }
+
+  @Test
   public void testWithNonOverrideCustom() {
-    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.apply("instancetype3");
+    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype3");
 
     assertThat(deviceMappings).hasSize(3);
     assertThat(deviceMappings.get(0).getDeviceName()).isEqualTo("/dev/sdb");
@@ -93,7 +109,7 @@ public class EphemeralDeviceMappingsTest {
 
   @Test
   public void testWithOverride() {
-    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.apply("instancetype1");
+    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype1");
 
     assertThat(deviceMappings).hasSize(4);
     assertThat(deviceMappings.get(0).getDeviceName()).isEqualTo("/dev/sdb");
@@ -105,7 +121,7 @@ public class EphemeralDeviceMappingsTest {
 
   @Test
   public void testWithLots() {
-    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.apply("instancetype24");
+    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype24");
 
     assertThat(deviceMappings).hasSize(24);
     assertThat(deviceMappings.get(0).getDeviceName()).isEqualTo("/dev/sdb");
@@ -122,11 +138,11 @@ public class EphemeralDeviceMappingsTest {
     EphemeralDeviceMappings ephemeralDeviceMappings =
         EphemeralDeviceMappings.getTestInstance(counts, DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
-    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.apply("instancetype1");
+    List<BlockDeviceMapping> deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype1");
     assertThat(deviceMappings).hasSize(11);
-    deviceMappings = ephemeralDeviceMappings.apply("instancetype2");
+    deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype2");
     assertThat(deviceMappings).hasSize(12);
-    deviceMappings = ephemeralDeviceMappings.apply("instancetype3");
+    deviceMappings = ephemeralDeviceMappings.getBlockDeviceMappings("instancetype3");
     assertThat(deviceMappings).hasSize(0);
   }
 }

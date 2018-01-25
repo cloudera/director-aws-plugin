@@ -18,6 +18,7 @@ import static com.cloudera.director.spi.v2.util.Preconditions.checkArgument;
 import com.google.common.collect.Lists;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Contains methods to get device names.
@@ -32,14 +33,22 @@ public class DeviceNameUtils {
    * @param pathPrefix the device name path prefix
    * @param startSuffix the character suffix to start with for the device name
    * @param count the number of device names to return
+   * @param filter a set of device names to exclude
    * @return list of device names
    */
-  public List<String> getDeviceNames(String pathPrefix, char startSuffix, int count) {
+  public List<String> getDeviceNames(String pathPrefix, char startSuffix, int count, Set<String> filter) {
     checkArgument(startSuffix >= 'b' && startSuffix <= 'z', "startSuffix should be between 'b' and 'z'");
     List<String> result = Lists.newArrayListWithExpectedSize(count);
     char suffix = startSuffix;
     for (int i = 0; i < count; i++) {
-      result.add(pathPrefix + suffix);
+      String deviceName = pathPrefix + suffix;
+
+      if (filter.contains(deviceName)) {
+        i--;
+      } else {
+        result.add(deviceName);
+      }
+
       suffix++;
       // Device character suffix should wrap around to the beginning after z.
       if (suffix == 'z' + 1) suffix = 'b';

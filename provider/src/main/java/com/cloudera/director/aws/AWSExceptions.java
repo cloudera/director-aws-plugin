@@ -40,14 +40,16 @@ public class AWSExceptions {
 
       // All exceptions that represent client errors are unrecoverable because the request itself is wrong
       // See {@see AmazonServiceException#ErrorType}
-      // OperationNotPermitted exception is unrecoverable. This can happen when terminating an
-      // instance that has termination protection enabled, or trying to detach the primary
-      // network interface (eth0) from an instance.
-      // Unsupported exception is also unrecoverable, since it represents an unsupported request.
-      // See docs at http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
+      // * OperationNotPermitted exception is unrecoverable. This can happen when terminating an
+      //   instance that has termination protection enabled, or trying to detach the primary
+      //   network interface (eth0) from an instance.
+      // * Unsupported exception is also unrecoverable, since it represents an unsupported request.
+      //   See docs at http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
+      // * InvalidParameterValue is unrecoverable, as one of the parameters supplied by the user is invalid.
       if (ase.getErrorType() == AmazonServiceException.ErrorType.Client ||
         "OperationNotPermitted".equals(ase.getErrorCode()) ||
-        "Unsupported".equals(ase.getErrorCode())) {
+        "Unsupported".equals(ase.getErrorCode()) ||
+        "InvalidParameterValue".equals(ase.getErrorCode())) {
         throw new UnrecoverableProviderException(ase.getErrorMessage(), ase);
       }
     }

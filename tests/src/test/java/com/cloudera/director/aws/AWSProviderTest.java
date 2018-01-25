@@ -22,11 +22,11 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 
-import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
-import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.ec2.EC2Provider;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
+import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
@@ -115,12 +115,12 @@ public class AWSProviderTest {
     AWSClientConfig awsClientConfig = new AWSClientConfig(new SimpleConfiguration(),
         httpProxyParameters, cloudLocalizationContext);
     Configured configuration = new SimpleConfiguration(environmentConfig);
-    AWSProvider awsProvider = new AWSProvider(configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
+    AWSProvider awsProvider = new AWSProvider(
+        configuration, ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, rdsEndpoints,
         rdsEncryptionInstanceClasses, awsClientConfig,
         awsFilters, awsTimeouts, customTagMappings, NetworkRules.EMPTY_RULES,
-        AWSProvider.getCredentialsProvider(configuration, cloudLocalizationContext),
-        cloudLocalizationContext);
+        STSRoles.DEFAULT, true, cloudLocalizationContext);
     assertSame(awsProviderMetadata, awsProvider.getProviderMetadata());
 
     ResourceProviderMetadata rdsResourceProviderMetadata = null;

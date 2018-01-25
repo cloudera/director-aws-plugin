@@ -24,13 +24,13 @@ import static com.cloudera.director.spi.v2.model.InstanceTemplate.InstanceTempla
 import static com.cloudera.director.spi.v2.provider.Launcher.DEFAULT_PLUGIN_LOCALIZATION_CONTEXT;
 import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Matchers.any;
-import static org.mockito.Matchers.anyBoolean;
-import static org.mockito.Matchers.argThat;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.hamcrest.MockitoHamcrest.argThat;
 
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
@@ -162,6 +162,7 @@ public class EC2ProviderTest {
         ec2ClientProvider,
         mock(AmazonIdentityManagementClientProvider.class, RETURNS_DEEP_STUBS),
         mock(AWSKMSClientProvider.class, RETURNS_DEEP_STUBS),
+        true,
         DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 
   }
@@ -388,8 +389,8 @@ public class EC2ProviderTest {
         .thenAnswer(new Answer<Object>() {
           @Override
           public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-            String ec2InstanceId = invocationOnMock
-                .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds().get(0);
+            DescribeInstanceStatusRequest request = (DescribeInstanceStatusRequest) invocationOnMock.getArgument(0);
+            String ec2InstanceId = request.getInstanceIds().get(0);
             return new DescribeInstanceStatusResult()
                 .withInstanceStatuses(new InstanceStatus()
                     .withInstanceId(ec2InstanceId)
@@ -421,8 +422,8 @@ public class EC2ProviderTest {
         .thenAnswer(new Answer<Object>() {
           @Override
           public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-            String ec2InstanceId = invocationOnMock
-                .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds().get(0);
+            DescribeInstanceStatusRequest request = (DescribeInstanceStatusRequest) invocationOnMock.getArgument(0);
+            String ec2InstanceId = request.getInstanceIds().get(0);
             return new DescribeInstanceStatusResult()
                 .withInstanceStatuses(new InstanceStatus()
                     .withInstanceId(ec2InstanceId)
@@ -454,8 +455,8 @@ public class EC2ProviderTest {
         .thenAnswer(new Answer<Object>() {
           @Override
           public Object answer(InvocationOnMock invocationOnMock) throws Throwable {
-            String ec2InstanceId = invocationOnMock
-                .getArgumentAt(0, DescribeInstanceStatusRequest.class).getInstanceIds().get(0);
+            DescribeInstanceStatusRequest request = (DescribeInstanceStatusRequest) invocationOnMock.getArgument(0);
+            String ec2InstanceId = request.getInstanceIds().get(0);
             return new DescribeInstanceStatusResult()
                 .withInstanceStatuses(new InstanceStatus()
                     .withInstanceId(ec2InstanceId)

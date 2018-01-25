@@ -33,7 +33,10 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA_UNENCODED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.BOTH_USER_DATA_USED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.HVM_VIRTUALIZATION;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.IMAGE_OWNER_ID_BLACKLIST_KEY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplateConfigurationValidator.IMAGE_PLATFORM_BLACKLIST_KEY;
@@ -892,6 +895,31 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     verifyClean();
   }
 
+  @Test
+  public void testValidateUserData_None() {
+    checkUserData(null, null);
+    verifyClean();
+  }
+
+  @Test
+  public void testValidateUserData_JustEncoded() {
+    checkUserData("encodedData", null);
+    verifyClean();
+  }
+
+  @Test
+  public void testValidateUserData_JustUnencoded() {
+    checkUserData(null, "unencodedData");
+    verifyClean();
+  }
+
+
+  @Test
+  public void testValidateUserData_Both() {
+    checkUserData("encodedData", "unencodedData");
+    verifySingleError(USER_DATA, BOTH_USER_DATA_USED);
+  }
+
   private void setMockEbsMetadata(String volumeType, int minAllowedSize, int maxAllowedSize) {
     EbsVolumeMetadata ebsVolumeMetadata = new EbsVolumeMetadata(volumeType, minAllowedSize, maxAllowedSize);
     when(ebsMetadata.apply(volumeType)).thenReturn(ebsVolumeMetadata);
@@ -1093,6 +1121,20 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     }
     Configured configuration = new SimpleConfiguration(configMap);
     validator.checkSpotParameters(configuration, accumulator, localizationContext);
+  }
+
+  /**
+   * Invokes checkUserData with the specified configuration.
+   *
+   * @param userData base64 encoded user data
+   * @param userDataUnencoded unencoded user data
+   */
+  protected void checkUserData(String userData, String userDataUnencoded) {
+    Map<String, String> configMap = Maps.newHashMap();
+    configMap.put(USER_DATA.unwrap().getConfigKey(), userData);
+    configMap.put(USER_DATA_UNENCODED.unwrap().getConfigKey(), userDataUnencoded);
+    Configured configuration = new SimpleConfiguration(configMap);
+    validator.checkUserData(configuration, accumulator, localizationContext);
   }
 
   /**

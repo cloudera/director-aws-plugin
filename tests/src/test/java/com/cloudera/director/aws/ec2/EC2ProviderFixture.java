@@ -4,23 +4,22 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.IMPORT_KEY_PAIR_IF_MISSING;
 import static com.cloudera.director.aws.ec2.EC2Provider.EC2ProviderConfigurationPropertyToken.KEY_NAME_PREFIX;
-
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
-import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
-import com.cloudera.director.aws.shaded.com.google.common.base.Optional;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.common.AWSKMSClientProvider;
 import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
+import com.cloudera.director.aws.shaded.com.google.common.base.Optional;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
@@ -97,7 +96,7 @@ public class EC2ProviderFixture {
     }
     return new EC2Provider(configured, edMappings, ebsMappings, ebsMetadata, vMappings,
                            filters, timeouts, tagMappings, networkRules,
-                           ec2ClientProvider, iamClientProvider, kmsClientProvider,
+                           ec2ClientProvider, iamClientProvider, kmsClientProvider, true,
                            localizationContext);
   }
 

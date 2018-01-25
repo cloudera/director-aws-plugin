@@ -27,10 +27,10 @@ import com.google.common.collect.Lists;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Contains functions to retrieve block device mappings and device names for EBS storage.
- *
  */
 public class EBSDeviceMappings {
 
@@ -85,11 +85,13 @@ public class EBSDeviceMappings {
    * @param volumeSizeGib the EBS volume size in GiB
    * @param iops the optional iops count
    * @param enableEncryption whether to set the encrypted flag
-   * @return list of EBS BlockDeviceMapping
+   * @param excludeDeviceNames set device names that shouldn't be used for the block device mappings
+   * @return set of EBS BlockDeviceMapping
    */
   public List<BlockDeviceMapping> getBlockDeviceMappings(int count, String volumeType, int volumeSizeGib,
-                                                         Optional<Integer> iops, boolean enableEncryption) {
-    List<String> deviceNames = getDeviceNames(count);
+                                                         Optional<Integer> iops, boolean enableEncryption,
+                                                         Set<String> excludeDeviceNames) {
+    List<String> deviceNames = getDeviceNames(count, excludeDeviceNames);
 
     List<BlockDeviceMapping> mappings = Lists.newArrayList();
 
@@ -113,11 +115,11 @@ public class EBSDeviceMappings {
     return mappings;
   }
 
-  List<String> getDeviceNames(int count) {
+  List<String> getDeviceNames(int count, Set<String> filter) {
     return deviceNameUtils.getDeviceNames(
         ebsDeviceMappingsConfigProperties.getDeviceNamePrefix(),
         ebsDeviceMappingsConfigProperties.getRangeStart(),
-        count
+        count, filter
     );
   }
 
