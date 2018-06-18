@@ -85,17 +85,29 @@ public class EBSDeviceMappings {
    * @param volumeSizeGib the EBS volume size in GiB
    * @param iops the optional iops count
    * @param enableEncryption whether to set the encrypted flag
+   * @param systemDisks additional system disk(s) to mount
    * @param excludeDeviceNames set device names that shouldn't be used for the block device mappings
    * @return set of EBS BlockDeviceMapping
    */
   public List<BlockDeviceMapping> getBlockDeviceMappings(int count, String volumeType, int volumeSizeGib,
                                                          Optional<Integer> iops, boolean enableEncryption,
-                                                         Set<String> excludeDeviceNames) {
-    List<String> deviceNames = getDeviceNames(count, excludeDeviceNames);
+                                                         List<SystemDisk> systemDisks, Set<String> excludeDeviceNames) {
+    int systemDiskCount = systemDisks.size();
+    int totalVolumeCount = count + systemDiskCount;
+
+    List<String> deviceNames = getDeviceNames(totalVolumeCount, excludeDeviceNames);
 
     List<BlockDeviceMapping> mappings = Lists.newArrayList();
 
-    for (String deviceName : deviceNames) {
+    for (int i = 0; i < systemDisks.size(); i++) {
+      String deviceName = deviceNames.get(i);
+      SystemDisk systemDisk = systemDisks.get(i);
+      mappings.add(systemDisk.toBlockDeviceMapping(deviceName));
+    }
+
+    for (int i = 0; i < count; i++) {
+      String deviceName = deviceNames.get(i + systemDiskCount);
+
       EbsBlockDevice ebs = new EbsBlockDevice()
           .withVolumeType(volumeType)
           .withVolumeSize(volumeSizeGib)
@@ -112,6 +124,7 @@ public class EBSDeviceMappings {
 
       mappings.add(mapping);
     }
+
     return mappings;
   }
 
@@ -122,6 +135,7 @@ public class EBSDeviceMappings {
         count, filter
     );
   }
+
 
   /**
    * Gets an instance of this class that uses only the given EBS device mapping configuration.

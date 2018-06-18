@@ -23,7 +23,7 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>aws</artifactId>
-        <version>1.4.5</version>
+        <version>1.5.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
@@ -45,6 +45,7 @@
         <guava.version>19.0</guava.version>
         <maven-compiler-plugin.version>3.3</maven-compiler-plugin.version>
         <maven-checkstyle-plugin.version>2.13</maven-checkstyle-plugin.version>
+        <maven-install-plugin.version>2.5.2</maven-install-plugin.version>
         <maven-pmd-plugin.version>3.7</maven-pmd-plugin.version>
         <findbugs-maven-plugin.version>3.0.3</findbugs-maven-plugin.version>
         <maven-surefire-plugin.version>2.19.1</maven-surefire-plugin.version>
@@ -141,6 +142,15 @@
                 <configuration>
                     <source>${java.version}</source>
                     <target>${java.version}</target>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-install-plugin</artifactId>
+                <version>${maven-install-plugin.version}</version>
+                <configuration>
+                    <skip>true</skip>
                 </configuration>
             </plugin>
 

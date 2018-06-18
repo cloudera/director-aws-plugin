@@ -45,7 +45,7 @@ public class EBSDeviceMappingsTest {
     boolean encrypted = false;
 
     List<BlockDeviceMapping> deviceMappings = ebsDeviceMappings.getBlockDeviceMappings(count, volumeType, volumeSizeGib,
-        iops, false, Collections.<String>emptySet());
+        iops, false, Collections.<SystemDisk>emptyList(), Collections.<String>emptySet());
 
     String firstDeviceName = EBSDeviceMappings.DEFAULT_EBS_DEVICE_NAME_PREFIX +
         EBSDeviceMappings.DEFAULT_EBS_DEVICE_NAME_START_CHAR;

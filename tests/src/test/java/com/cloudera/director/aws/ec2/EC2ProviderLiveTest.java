@@ -18,6 +18,7 @@ import static com.cloudera.director.aws.AWSLauncher.DEFAULT_PLUGIN_LOCALIZATION_
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SYSTEM_DISKS;
 import static com.cloudera.director.aws.test.EC2ProviderCommon.CENTOS67_HVM_AMI_BY_REGION;
 import static com.cloudera.director.aws.test.EC2ProviderCommon.waitUntilRunningOrTerminal;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
@@ -35,7 +36,9 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
+import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.Tags.InstanceTags;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Volume;
 import com.cloudera.director.aws.test.LiveTestProperties;
 import com.cloudera.director.aws.shaded.com.amazonaws.auth.AWSCredentialsProvider;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2Client;
@@ -182,7 +185,7 @@ public class EC2ProviderLiveTest {
     try {
       ec2Provider.allocate(instanceTemplate, requestId, 1);
     } catch (UnrecoverableProviderException ex) {
-      verifySingleErrorCode(ex, EC2Provider.VOLUME_LIMIT_EXCEEDED);
+      verifySingleErrorCode(ex, AWSExceptions.VOLUME_LIMIT_EXCEEDED);
     } finally {
       ec2Provider.delete(instanceTemplate, requestId);
     }
@@ -248,12 +251,73 @@ public class EC2ProviderLiveTest {
       fail("Expected an UnrecoverableProviderException to be thrown");
 
     } catch(UnrecoverableProviderException ex) {
-      verifySingleErrorCode(ex, EC2Provider.INSTANCE_LIMIT_EXCEEDED);
+      verifySingleErrorCode(ex, AWSExceptions.INSTANCE_LIMIT_EXCEEDED);
     } finally {
       ec2Provider.delete(instanceTemplate, requestIds1);
       ec2Provider.delete(instanceTemplate, requestIds2);
     }
   }
+
+  @Test
+  public void testSystemDisk() throws InterruptedException {
+    LinkedHashMap<String, String> providerConfigMap = new LinkedHashMap<>();
+    putConfig(providerConfigMap, REGION, liveTestProperties.getTestRegion());
+
+    EC2Provider ec2Provider = getEc2Provider(new SimpleConfiguration(providerConfigMap), createCredentialsProvider());
+
+    TestInstanceTemplate template = newTemplate();
+    template.addConfig(TYPE, "m3.medium");
+
+    int templateDiskSize = 50;
+    template.addConfig(EBS_VOLUME_COUNT, "2");
+    template.addConfig(EBS_VOLUME_SIZE_GIB, Integer.toString(templateDiskSize));
+    template.addConfig(EBS_VOLUME_TYPE, "gp2");
+
+    int systemDiskSize01 = 85;
+    int systemDiskSize02 = 90;
+
+    String systemDisksConfig = "[ \n" +
+        "  { \"volumeType\": \"gp2\", \"volumeSize\": \"%d\", \"enableEncryption\": \"false\" },\n" +
+        "  { \"volumeType\": \"gp2\", \"volumeSize\": \"%d\", \"enableEncryption\": \"false\" } \n" +
+        "]";
+
+    template.addConfig(
+        SYSTEM_DISKS,
+        String.format(systemDisksConfig, systemDiskSize01, systemDiskSize02)
+    );
+
+    EC2InstanceTemplate instanceTemplate = ec2Provider.createResourceTemplate(
+        template.getTemplateName(), new SimpleConfiguration(template.getConfigs()),
+        template.getTags()
+    );
+
+    List<String> requestId = Lists.newArrayList(UUID.randomUUID().toString());
+    try {
+      ec2Provider.allocate(instanceTemplate, requestId, 1);
+
+      // verify there are 5 volumes (1 root volume, 2 volumes from template, 2 system disk volumes)
+      List<Volume> volumes = ec2Provider.getVolumes(Iterables.getOnlyElement(requestId));
+      assertTrue(volumes.size() == 5);
+
+      boolean hasTemplateDisk = false;
+      boolean hasSystemDisk01 = false;
+      boolean hasSystemDisk02 = false;
+
+      for (Volume volume : volumes) {
+        int volumeSize = volume.getSize();
+        hasTemplateDisk = hasTemplateDisk || (volumeSize == templateDiskSize);
+        hasSystemDisk01 = hasSystemDisk01 || (volumeSize == systemDiskSize01);
+        hasSystemDisk02 = hasSystemDisk02 || (volumeSize == systemDiskSize02);
+      }
+
+      assertTrue(hasTemplateDisk);
+      assertTrue(hasSystemDisk01);
+      assertTrue(hasSystemDisk02);
+    } finally {
+      ec2Provider.delete(instanceTemplate, requestId);
+    }
+  }
+
 
   private void verifySingleErrorCode(AbstractPluginException ex, String errorCode) {
     Map<String, SortedSet<PluginExceptionCondition>> conditionsByKey =

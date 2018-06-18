@@ -28,11 +28,13 @@ import com.google.common.base.Preconditions;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * EC2 compute instance.
@@ -367,7 +369,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
     SECURITY_GROUPS(new SimpleDisplayPropertyBuilder()
         .displayKey("securityGroups")
         .name("Security Groups")
-        .defaultDescription("Security groups names and IDs attached to this instance.")
+        .defaultDescription("Security group names and IDs attached to this instance.")
         .sensitive(false)
         .build()) {
       @Override
@@ -379,6 +381,29 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
         return Joiner.on(", ").join(result);
       }
     },
+
+    /**
+     * The raw IDs of all the security groups attached to this instance. This is meant to be used when pushing
+     * instance properties back into the instance template.
+     */
+    SECURITY_GROUPS_IDS_RAW(new SimpleDisplayPropertyBuilder()
+        .displayKey("securityGroupsIdsRaw")
+        .name("Security Groups")
+        .defaultDescription("Security group IDs attached to this instance.")
+        .sensitive(false)
+        .hidden(true)
+        .build()) {
+      @Override
+      protected String getPropertyValue(Instance instance) {
+        // Sorted to avoid false detection of modification
+        Set<String> result = Sets.newTreeSet();
+        for (GroupIdentifier group : instance.getSecurityGroups()) {
+          result.add(group.getGroupId());
+        }
+        return Joiner.on(",").join(result);
+      }
+    },
+
 
     /**
      * The ID of the subnet in which the instance is running.

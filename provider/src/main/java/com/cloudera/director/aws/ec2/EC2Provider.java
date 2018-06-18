@@ -78,6 +78,7 @@ import com.amazonaws.services.ec2.model.TagSpecification;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 import com.amazonaws.services.ec2.model.TerminateInstancesResult;
 import com.amazonaws.services.ec2.model.Volume;
+import com.amazonaws.services.ec2.model.VolumeState;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.kms.AWSKMSClient;
 import com.cloudera.director.aws.AWSExceptions;
@@ -93,6 +94,7 @@ import com.cloudera.director.aws.ec2.ebs.EBSAllocator;
 import com.cloudera.director.aws.ec2.ebs.EBSAllocator.InstanceEbsVolumes;
 import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
+import com.cloudera.director.aws.ec2.ebs.SystemDisk;
 import com.cloudera.director.aws.network.NetworkRules;
 import com.cloudera.director.spi.v2.compute.util.AbstractComputeProvider;
 import com.cloudera.director.spi.v2.model.ConfigurationProperty;
@@ -104,6 +106,7 @@ import com.cloudera.director.spi.v2.model.Property;
 import com.cloudera.director.spi.v2.model.Resource;
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionDetails;
+import com.cloudera.director.spi.v2.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
 import com.cloudera.director.spi.v2.model.util.CompositeConfigurationValidator;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
@@ -258,12 +261,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
    * Max spot instance count exceeded failure string.
    */
   private static final String MAX_SPOT_INSTANCE_COUNT_EXCEEDED = "MaxSpotInstanceCountExceeded";
-
-  /**
-   * Volume limit exceeded failure string.
-   */
-  @VisibleForTesting
-  static final String VOLUME_LIMIT_EXCEEDED = "Client.VolumeLimitExceeded";
 
   /**
    * Instance ID not found failure string. This may indicate an eventual consistency issue.
@@ -429,6 +426,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             "eu-central-1",
             "eu-west-1",
             "eu-west-2",
+            "eu-west-3",
             "sa-east-1",
             "us-east-1",
             "us-east-2",
@@ -492,7 +490,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     AS_SEPARATE_REQUESTS;
 
     private static EBSAllocationStrategy get(EC2InstanceTemplate template) {
-      if (template.getEbsVolumeCount() == 0) {
+      if (template.getEbsVolumeCount() == 0 && template.getSystemDisks().size() == 0) {
         return NO_EBS_VOLUMES;
       }
 
@@ -502,12 +500,28 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       // scenario we have to individually create and attach each EBS volume separately
       // after instance launch.
 
-      if (template.isEnableEbsEncryption() && template.getEbsKmsKeyId().isPresent()) {
+      if (requiresKmsKeyId(template)) {
         return AS_SEPARATE_REQUESTS;
       } else {
         return AS_INSTANCE_REQUEST;
       }
     }
+  }
+
+  private static boolean requiresKmsKeyId(EC2InstanceTemplate template) {
+    boolean hasVolumesWithKmsKey = (template.getEbsVolumeCount() != 0) ?
+        template.getEbsKmsKeyId().isPresent() :
+        template.getSystemDisks().get(0).getKmsKeyId() != null;
+
+    for (SystemDisk systemDisk : template.getSystemDisks()) {
+      boolean systemDiskUsingKmsKey = systemDisk.getKmsKeyId() != null;
+      if (hasVolumesWithKmsKey && !systemDiskUsingKmsKey) {
+        throw new IllegalArgumentException(
+            "Either all volumes should be encrypted with KMS Key ID or none"
+        );
+      }
+    }
+    return hasVolumesWithKmsKey;
   }
 
   private final AmazonEC2AsyncClient client;
@@ -838,7 +852,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     boolean success = false;
 
-    Image image =  getImage(template.getImage());
+    Image image = getImage(template.getImage());
     Set<String> existingDeviceNames = getExistingDeviceNames(image.getBlockDeviceMappings());
 
     EBSAllocator ebsAllocator = new EBSAllocator(this.client, this.awsTimeouts, ec2TagHelper, ebsDeviceMappings,
@@ -848,9 +862,16 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     List<InstanceEbsVolumes> instanceVolumes = ebsAllocator.createVolumes(template, instanceIdPairs);
 
     try {
-      instanceVolumes = ebsAllocator.waitUntilVolumesAvailable(instanceVolumes);
-      instanceVolumes = ebsAllocator.attachAndOptionallyTagVolumes(template, instanceVolumes);
-      ebsAllocator.addDeleteOnTerminationFlag(instanceVolumes);
+      try {
+        instanceVolumes = ebsAllocator.waitUntilVolumesAvailable(instanceVolumes);
+        instanceVolumes = ebsAllocator.attachAndOptionallyTagVolumes(template, instanceVolumes);
+      } finally {
+        // Ensure that delete on termination is set for attached instances no matter what. It's possible
+        // for the EBS volume/ attachment to time out but still succeed, which can lead to leaked EBS
+        // volumes. This should ensure that the instances are not leaked accidentally.
+        instanceVolumes = ebsAllocator.getUpdatedVolumeInfo(instanceVolumes); // Update volume states
+        ebsAllocator.addDeleteOnTerminationFlag(instanceVolumes);
+      }
 
       int successfulInstances = getSuccessfulInstanceCount(instanceVolumes);
       LOG.info("{} out of {} instances successfully acquired EBS volumes",
@@ -886,8 +907,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     nextInstanceVolume:
     for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
-      for (InstanceEbsVolumes.Status status : instanceEbsVolumes.getVolumeStatuses().values()) {
-        if (status != InstanceEbsVolumes.Status.ATTACHED) {
+      for (VolumeState status : instanceEbsVolumes.getVolumeStates().values()) {
+        if (status != VolumeState.InUse) {
           deleteCreatedVolumes(instanceEbsVolumes, ebsAllocator);
           instancesToTerminate.add(instanceEbsVolumes.getVirtualInstanceId());
           continue nextInstanceVolume;
@@ -913,11 +934,16 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     delete(template, instancesToTerminate);
   }
 
-  private void deleteCreatedVolumes(InstanceEbsVolumes instanceEbsVolumes, EBSAllocator ebsAllocator) {
-    Set<String> volumesToDelete = Sets.newHashSet();
-    for (String volumeId : instanceEbsVolumes.getVolumeStatuses().keySet()) {
+  private void deleteCreatedVolumes(InstanceEbsVolumes instanceEbsVolumes, EBSAllocator ebsAllocator)
+      throws InterruptedException {
+    Map<String, VolumeState> volumesToDelete = Maps.newHashMap();
+    for (Entry<String, VolumeState> volumeIdAndStatus
+        : instanceEbsVolumes.getVolumeStates().entrySet()) {
+      String volumeId = volumeIdAndStatus.getKey();
+      VolumeState state = volumeIdAndStatus.getValue();
+
       if (!volumeId.startsWith(InstanceEbsVolumes.UNCREATED_VOLUME_ID)) {
-        volumesToDelete.add(volumeId);
+        volumesToDelete.put(volumeId, state);
       }
     }
     ebsAllocator.deleteVolumes(volumesToDelete);
@@ -931,8 +957,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     int count = 0;
     for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
       boolean success = true;
-      for (InstanceEbsVolumes.Status status : instanceEbsVolumes.getVolumeStatuses().values()) {
-        if (status != InstanceEbsVolumes.Status.ATTACHED) {
+      for (VolumeState state : instanceEbsVolumes.getVolumeStates().values()) {
+        if (state != VolumeState.InUse) {
           success = false;
           break;
         }
@@ -1284,18 +1310,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     return null;
   }
 
-  private Map<String, String> toExceptionInfoMap(String message, AmazonServiceException ex) {
-    return toExceptionInfoMap(message, ex.getErrorCode(), ex.getErrorMessage());
-  }
-
-  private Map<String, String> toExceptionInfoMap(String message, String awsErrorCode, String awsErrorMessage) {
-    return ImmutableMap.of(
-        "message", message,
-        "awsErrorCode", awsErrorCode,
-        "awsErrorMessage", awsErrorMessage
-    );
-  }
-
   /**
    * Atomically allocates multiple regular EC2 instances with the specified identifiers based on a
    * single instance template. If not all the instances can be allocated, the number of instances
@@ -1345,11 +1359,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
       LOG.info(">> Building {} instance requests", unallocatedInstanceIds.size());
 
-      Map<String, AmazonServiceException> encounteredAmazonExceptions = Maps.newHashMap();
-      // These will only be used for tag on create
-      int instancesFailedForInsufficientCapacity = 0;
-      int instancesFailedForInstanceLimitExceeded = 0;
-      int instancesFailedForRequestLimitExceeded = 0;
+      Set<Exception> encounteredExceptions = Sets.newHashSet();
 
       if (useTagOnCreate) {
         Map<String, Future<RunInstancesResult>> runInstanceRequests = Maps.newHashMap();
@@ -1359,7 +1369,6 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         }
 
         LOG.info(">> Submitted {} run instance requests.", runInstanceRequests.size());
-        UnrecoverableProviderException ex = null;
 
         // Map of encountered AWS exceptions where key is the AWS error code, which we may propagate
         // later. It should be sufficient to just keep track of one exception per error code.
@@ -1376,51 +1385,16 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
           } catch (ExecutionException e) {
             if (e.getCause() instanceof AmazonServiceException) {
               AmazonServiceException awsException = (AmazonServiceException) e.getCause();
-
-              try {
-                AWSExceptions.propagateIfUnrecoverable(awsException);
-              } catch (UnrecoverableProviderException ue) {
-                if (ex == null) {
-                  ex = ue;
-                } else {
-                  ex.addSuppressed(ue);
-                }
-              }
-
-              // todo update encounteredAmazonExceptions for other exceptions (not just instance limits)
-
-              String awsErrorCode = awsException.getErrorCode();
-              switch (awsErrorCode) {
-                case INSUFFICIENT_INSTANCE_CAPACITY:
-                  LOG.warn("Instance {} was not allocated due to insufficient instance capacity in AWS.",
-                      virtualInstanceId);
-                  ++instancesFailedForInsufficientCapacity;
-                  break;
-                case INSTANCE_LIMIT_EXCEEDED:
-                  LOG.warn("Instance {} was not allocated due to exceeding instance limits on the AWS account.",
-                      virtualInstanceId);
-                  ++instancesFailedForInstanceLimitExceeded;
-                  encounteredAmazonExceptions.put(awsErrorCode, awsException);
-                  break;
-                case REQUEST_LIMIT_EXCEEDED:
-                  LOG.warn("Encountered rate limit errors while allocating instance {}", virtualInstanceId);
-                  ++instancesFailedForRequestLimitExceeded;
-                  break;
-                default:
-                  LOG.error("Exception while trying to allocate instance.", e);
-              }
-
-              LOG.info("Checking if we have enough instances to continue");
-
+              LOG.error("AWS error while requesting instance {}, AWS error code: {}",
+                  virtualInstanceId, awsException.getErrorCode());
+              encounteredExceptions.add(awsException);
             } else {
               LOG.error("Error while requesting instance {}. Attempting to proceed.", virtualInstanceId);
-              LOG.debug("Exception caught:", e);
+              encounteredExceptions.add(e);
             }
-          }
-        }
 
-        if (ex != null) {
-          throw ex;
+            LOG.debug("Exception caught:", e);
+          }
         }
 
         if (LOG.isInfoEnabled()) {
@@ -1534,34 +1508,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         }
       }
 
-      PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
+      Set<StateReason> failedStateReasons = getStateReasons(unsuccessfulInstances.values());
 
-      if (instancesFailedForInstanceLimitExceeded != 0) {
-        AmazonServiceException instanceLimitEx = encounteredAmazonExceptions.get(INSTANCE_LIMIT_EXCEEDED);
-        String message = String.format("Exceeded instance limit for instance type %s", template.getType());
-        accumulator.addError(toExceptionInfoMap(message, instanceLimitEx));
-      }
+      AWSExceptions.propagate("Problem allocating on-demand instances",
+          encounteredExceptions, failedStateReasons, template);
 
-      if (unsuccessfulInstances.size() != 0) {
-        addInstanceStateErrors(template, unsuccessfulInstances.values(), accumulator);
-      }
-
-      if (accumulator.hasError()) {
-        throw new UnrecoverableProviderException(
-            "Problem allocating on-demand instances.",
-            new PluginExceptionDetails(accumulator.getConditionsByKey())
-        );
-      }
-
-      LOG.error("Trying to allocate ({}) instances, ({}) instances allocated, below minimum count ({}): " +
-              "({}) instances failed for insufficient instance capacity, " +
-              "({}) instances failed for request limit exceeded, ",
-          instanceCount, numInstancesAlive, minCount,
-          instancesFailedForInsufficientCapacity,
-          instancesFailedForRequestLimitExceeded);
-      return Collections.emptyList();
-
-    } catch (InterruptedException | UnrecoverableProviderException e) {
+      return Collections.emptySet();
+    } catch (InterruptedException | UnrecoverableProviderException | TransientProviderException e) {
       throw e;
     } catch (Exception e) {
       throw new UnrecoverableProviderException("Unexpected problem during instance allocation", e);
@@ -1587,14 +1540,12 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   /**
    * Takes a collection of instances and extracts termination state reason information. This
    * information will be added to the specified list of plugin exception conditions.
-   *
-   * @param template the ec2 instance template
-   * @param unsuccessfulInstances collection of instances to check
-   * @param accumulator the accumulator to add exception information
    */
-  private void addInstanceStateErrors(EC2InstanceTemplate template,
-                                      Collection<Instance> unsuccessfulInstances,
-                                      PluginExceptionConditionAccumulator accumulator) {
+  private Set<StateReason> getStateReasons(Collection<Instance> unsuccessfulInstances) {
+    if (unsuccessfulInstances.size() == 0) {
+      return Collections.emptySet();
+    }
+
     Set<String> ec2InstanceIds = Sets.newHashSet();
     for (Instance instance : unsuccessfulInstances) {
       ec2InstanceIds.add(instance.getInstanceId());
@@ -1608,7 +1559,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
 
     // Store the state reason error codes in a map to avoid adding duplicate
     // errors in the accumulator.
-    Map<String, String> stateErrorCodeToMessage = Maps.newHashMap();
+    Map<String, StateReason> stateReasons = Maps.newHashMap();
 
     for (Reservation reservation : reservations) {
       Instance instance = getOnlyElement(reservation.getInstances());
@@ -1627,21 +1578,10 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       String code = stateReason.getCode();
       String message = stateReason.getMessage();
       LOG.error("Instance {} termination reason: ", message);
-      stateErrorCodeToMessage.put(code, message);
+      stateReasons.put(code, stateReason);
     }
 
-    for (Entry<String, String> entry : stateErrorCodeToMessage.entrySet()) {
-      String stateReasonCode = entry.getKey();
-      String stateReasonMessage = entry.getValue();
-
-      String message = "Instance(s) were unexpectedly terminated";
-      if (stateReasonCode.equals(VOLUME_LIMIT_EXCEEDED)) {
-        message = String.format("Instance(s) were terminated due to volume limits for %s volume type",
-            template.getEbsVolumeType());
-      }
-
-      accumulator.addError(toExceptionInfoMap(message, stateReasonCode, stateReasonMessage));
-    }
+    return Sets.newHashSet(stateReasons.values());
   }
 
   /**
@@ -1955,7 +1895,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         LOG.info("EBS volumes will be allocated as part of instance launch request");
         List<BlockDeviceMapping> mappings = ebsDeviceMappings.getBlockDeviceMappings(
             ebsVolumeCount, template.getEbsVolumeType(), template.getEbsVolumeSizeGiB(),
-            template.getEbsIops(), template.isEnableEbsEncryption(), existingDeviceNames
+            template.getEbsIops(), template.isEnableEbsEncryption(), template.getSystemDisks(),
+            existingDeviceNames
         );
         deviceMappings.addAll(mappings);
         break;

@@ -32,12 +32,14 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SECURITY_GROUP_IDS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SYSTEM_DISKS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA_UNENCODED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 
+import com.cloudera.director.aws.ec2.ebs.SystemDisk;
 import com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate;
 import com.cloudera.director.spi.v2.model.ConfigurationProperty;
 import com.cloudera.director.spi.v2.model.Configured;
@@ -186,6 +188,21 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
                 "provision for the volume."
         ).widget(ConfigurationProperty.Widget.NUMBER)
         .type(Property.Type.INTEGER)
+        .build()),
+
+    /**
+     * Configurations for extra EBS volumes to mount, this allows for heterogeneous volumes.
+     * Note that this is a temporary solution and this configuration configuration property
+     * may be removed in the future.
+     */
+    SYSTEM_DISKS(new SimpleConfigurationPropertyBuilder()
+        .configKey("systemDisks")
+        .name("Configurations for extra EBS volumes")
+        .widget(ConfigurationProperty.Widget.OPENMULTI)
+        .hidden(true)
+        .defaultDescription(
+            "Configurations for extra EBS volumes"
+        )
         .build()),
 
     /**
@@ -476,9 +493,15 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "c5.18xlarge",
             "g2.2xlarge",
             "g2.8xlarge",
+            "g3.4xlarge",
+            "g3.8xlarge",
+            "g3.16xlarge",
             "p2.xlarge",
             "p2.8xlarge",
             "p2.16xlarge",
+            "p3.2xlarge",
+            "p3.8xlarge",
+            "p3.16xlarge",
             "r3.large",
             "r3.xlarge",
             "r3.2xlarge",
@@ -638,6 +661,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final Optional<Integer> ebsIops;
 
   /**
+   * Configuration for extra EBS volumes.
+   */
+  private final List<SystemDisk> systemDisks;
+
+  /**
    * Whether to enable ebs encryption of the additional EBS volumes.
    */
   private final boolean enableEbsEncryption;
@@ -719,6 +747,9 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     this.enableEbsEncryption =
         Boolean.parseBoolean(getConfigurationValue(ENCRYPT_ADDITIONAL_EBS_VOLUMES, localizationContext));
     this.ebsKmsKeyId = Optional.fromNullable(getConfigurationValue(EBS_KMS_KEY_ID, localizationContext));
+
+    this.systemDisks =
+        SystemDisk.parse(getConfigurationValue(SYSTEM_DISKS, localizationContext));
 
     this.iamProfileName =
         Optional.fromNullable(getConfigurationValue(IAM_PROFILE_NAME, localizationContext));
@@ -890,6 +921,15 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   public Optional<String> getEbsKmsKeyId() {
     return ebsKmsKeyId;
+  }
+
+  /**
+   * Returns the system disks.
+   *
+   * @return the system disk.
+   */
+  public List<SystemDisk> getSystemDisks() {
+    return systemDisks;
   }
 
   /**
