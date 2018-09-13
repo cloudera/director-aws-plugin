@@ -16,6 +16,10 @@ package com.cloudera.director.aws.ec2.ebs;
 
 import static com.cloudera.director.spi.v2.provider.Launcher.DEFAULT_PLUGIN_LOCALIZATION_CONTEXT;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.EbsBlockDevice;
 import com.cloudera.director.aws.shaded.com.google.common.base.Optional;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
@@ -44,8 +48,18 @@ public class EBSDeviceMappingsTest {
     Optional<Integer> iops = Optional.absent();
     boolean encrypted = false;
 
-    List<BlockDeviceMapping> deviceMappings = ebsDeviceMappings.getBlockDeviceMappings(count, volumeType, volumeSizeGib,
-        iops, false, Collections.<SystemDisk>emptyList(), Collections.<String>emptySet());
+    EC2InstanceTemplate instanceTemplate = mock(EC2InstanceTemplate.class);
+    when(instanceTemplate.getEbsVolumeCount()).thenReturn(count);
+
+    when(instanceTemplate.getEbsVolumeType()).thenReturn(volumeType);
+    when(instanceTemplate.getEbsVolumeSizeGiB()).thenReturn(volumeSizeGib);
+    when(instanceTemplate.getEbsIops()).thenReturn(iops);
+    when(instanceTemplate.isEnableEbsEncryption()).thenReturn(encrypted);
+    when(instanceTemplate.getEbsKmsKeyId()).thenReturn(Optional.absent());
+    when(instanceTemplate.getSystemDisks()).thenReturn(Collections.emptyList());
+
+    List<BlockDeviceMapping> deviceMappings =
+        ebsDeviceMappings.getBlockDeviceMappings(instanceTemplate, Collections.emptySet());
 
     String firstDeviceName = EBSDeviceMappings.DEFAULT_EBS_DEVICE_NAME_PREFIX +
         EBSDeviceMappings.DEFAULT_EBS_DEVICE_NAME_START_CHAR;

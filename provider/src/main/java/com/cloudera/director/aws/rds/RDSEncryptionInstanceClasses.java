@@ -51,7 +51,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
   /**
    * RDS encryption instance classes configuration properties.
    */
-  public static enum ConfigurationPropertyToken
+  public enum ConfigurationPropertyToken
       implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
@@ -62,7 +62,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
         .configKey("customEncryptionInstanceClassesPath")
         .name("Custom encryption instance classes path")
         .defaultDescription("The path for the custom list of RDS encryption instance classes. " +
-                            "Relative paths are based on the plugin configuration directory.")
+            "Relative paths are based on the plugin configuration directory.")
         .build());
 
     /**
@@ -75,7 +75,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
      *
      * @param configurationProperty the configuration property
      */
-    private ConfigurationPropertyToken(ConfigurationProperty configurationProperty) {
+    ConfigurationPropertyToken(ConfigurationProperty configurationProperty) {
       this.configurationProperty = configurationProperty;
     }
 
@@ -110,7 +110,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
           cloudLocalizationContext, "rdsEncryptionInstanceClasses");
       setCustomEncryptionInstanceClassesPath(
           configuration.getConfigurationValue(ConfigurationPropertyToken.CUSTOM_ENCRYPTION_INSTANCE_CLASSES_PATH,
-                                              localizationContext));
+              localizationContext));
     }
 
     @VisibleForTesting
@@ -125,18 +125,18 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
     private File getCustomEncryptionInstanceClassesFile(String customEncryptionInstanceClassesPath) {
       File customEncryptionInstanceClassesPathFile = new File(customEncryptionInstanceClassesPath);
       return customEncryptionInstanceClassesPathFile.isAbsolute() ?
-             customEncryptionInstanceClassesPathFile :
-             new File(configurationDirectory, customEncryptionInstanceClassesPath);
+          customEncryptionInstanceClassesPathFile :
+          new File(configurationDirectory, customEncryptionInstanceClassesPath);
     }
 
     public final void setCustomEncryptionInstanceClassesPath(String customEncryptionInstanceClassesPath) {
       if (customEncryptionInstanceClassesPath != null) {
         LOG.info("Overriding customEncryptionInstanceClassesPath={} (default {})",
-                 customEncryptionInstanceClassesPath,
-                 DEFAULT_CUSTOM_ENCRYPTION_INSTANCE_CLASSES_PATH);
+            customEncryptionInstanceClassesPath,
+            DEFAULT_CUSTOM_ENCRYPTION_INSTANCE_CLASSES_PATH);
         checkArgument(getCustomEncryptionInstanceClassesFile(customEncryptionInstanceClassesPath).exists(),
-                      "Custom RDS encryption instance classes path " +
-                      customEncryptionInstanceClassesPath + " does not exist");
+            "Custom RDS encryption instance classes path " +
+                customEncryptionInstanceClassesPath + " does not exist");
         this.customEncryptionInstanceClassesPath = customEncryptionInstanceClassesPath;
       }
     }
@@ -162,15 +162,15 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
   /**
    * Creates RDS encryption instance classes with the specified parameters.
    *
-   * @param configuration               the configuration
-   * @param configurationDirectory      the plugin configuration directory
-   * @param localizationContext         the localization context
+   * @param configuration          the configuration
+   * @param configurationDirectory the plugin configuration directory
+   * @param localizationContext    the localization context
    */
   public RDSEncryptionInstanceClasses(Configured configuration, File configurationDirectory,
-                                      LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
     this.rdsEncryptionInstanceClassesConfigProperties =
         new RDSEncryptionInstanceClassesConfigProperties(configuration, configurationDirectory,
-                                                         localizationContext);
+            localizationContext);
     rdsEncryptionInstanceClassesResolver =
         getResolver(this.rdsEncryptionInstanceClassesConfigProperties);
   }
@@ -182,7 +182,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
    * @param rdsEncryptionInstanceClassesResolver         the RDS encryption instance classes resolver
    */
   private RDSEncryptionInstanceClasses(RDSEncryptionInstanceClassesConfigProperties rdsEncryptionInstanceClassesConfigProperties,
-                                       PropertyResolver rdsEncryptionInstanceClassesResolver) {
+      PropertyResolver rdsEncryptionInstanceClassesResolver) {
     this.rdsEncryptionInstanceClassesConfigProperties =
         rdsEncryptionInstanceClassesConfigProperties;
     this.rdsEncryptionInstanceClassesResolver = rdsEncryptionInstanceClassesResolver;
@@ -196,7 +196,8 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
    * @param instanceClass instance class
    * @return true if instance class supports encryption
    */
-  @Nullable @Override
+  @Nullable
+  @Override
   public Boolean apply(String instanceClass) {
     return Boolean.valueOf(rdsEncryptionInstanceClassesResolver.getProperty(instanceClass, "false"));
   }
@@ -206,7 +207,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
    * instance classes.
    *
    * @param encryptionInstanceClasses list of instance classes that support storage encryption
-   * @param localizationContext the localization context
+   * @param localizationContext       the localization context
    * @return new encryption instance classes object
    */
   public static RDSEncryptionInstanceClasses getTestInstance(
@@ -223,7 +224,7 @@ public class RDSEncryptionInstanceClasses implements Function<String, Boolean> {
 
     RDSEncryptionInstanceClassesConfigProperties configProperties =
         new RDSEncryptionInstanceClassesConfigProperties(new SimpleConfiguration(), tempDir,
-                                                         localizationContext);
+            localizationContext);
     return new RDSEncryptionInstanceClasses(configProperties, resolver);
   }
 }

@@ -19,6 +19,7 @@ import com.amazonaws.services.ec2.model.EbsBlockDevice;
 import com.cloudera.director.aws.Configurations;
 import com.cloudera.director.aws.ec2.DeviceMappingsConfigProperties;
 import com.cloudera.director.aws.ec2.DeviceNameUtils;
+import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
@@ -49,7 +50,7 @@ public class EBSDeviceMappings {
      * @param cloudLocalizationContext the parent cloud localization context
      */
     public EbsDeviceMappingsConfigProperties(String configSection, Configured configuration,
-                                             LocalizationContext cloudLocalizationContext) {
+        LocalizationContext cloudLocalizationContext) {
       super(configSection, configuration, cloudLocalizationContext);
     }
 
@@ -80,20 +81,19 @@ public class EBSDeviceMappings {
   /**
    * Gets a list of EBS block device mappings with the specified parameters.
    *
-   * @param count the number of BlockDeviceMapping
-   * @param volumeType the EBS volume type
-   * @param volumeSizeGib the EBS volume size in GiB
-   * @param iops the optional iops count
-   * @param enableEncryption whether to set the encrypted flag
-   * @param systemDisks additional system disk(s) to mount
+   * @param template     EC2InstanceTemplate which contains information about
+   *                     the EBS volumes requested
    * @param excludeDeviceNames set device names that shouldn't be used for the block device mappings
    * @return set of EBS BlockDeviceMapping
    */
-  public List<BlockDeviceMapping> getBlockDeviceMappings(int count, String volumeType, int volumeSizeGib,
-                                                         Optional<Integer> iops, boolean enableEncryption,
-                                                         List<SystemDisk> systemDisks, Set<String> excludeDeviceNames) {
+  @SuppressWarnings("Guava")
+  public List<BlockDeviceMapping> getBlockDeviceMappings(EC2InstanceTemplate template,
+                                                         Set<String> excludeDeviceNames) {
+    List<SystemDisk> systemDisks = template.getSystemDisks();
+
+    int templateDiskCount = template.getEbsVolumeCount();
     int systemDiskCount = systemDisks.size();
-    int totalVolumeCount = count + systemDiskCount;
+    int totalVolumeCount = templateDiskCount + systemDiskCount;
 
     List<String> deviceNames = getDeviceNames(totalVolumeCount, excludeDeviceNames);
 
@@ -105,17 +105,23 @@ public class EBSDeviceMappings {
       mappings.add(systemDisk.toBlockDeviceMapping(deviceName));
     }
 
-    for (int i = 0; i < count; i++) {
+    for (int i = 0; i < templateDiskCount; i++) {
       String deviceName = deviceNames.get(i + systemDiskCount);
 
       EbsBlockDevice ebs = new EbsBlockDevice()
-          .withVolumeType(volumeType)
-          .withVolumeSize(volumeSizeGib)
-          .withEncrypted(enableEncryption)
+          .withVolumeType(template.getEbsVolumeType())
+          .withVolumeSize(template.getEbsVolumeSizeGiB())
+          .withEncrypted(template.isEnableEbsEncryption())
           .withDeleteOnTermination(true);
+
+      Optional<Integer> iops = template.getEbsIops();
+      Optional<String> kmsKeyid = template.getEbsKmsKeyId();
 
       if (iops.isPresent()) {
         ebs = ebs.withIops(iops.get());
+      }
+      if (kmsKeyid.isPresent()) {
+        ebs = ebs.withKmsKeyId(kmsKeyid.get());
       }
 
       BlockDeviceMapping mapping = new BlockDeviceMapping()

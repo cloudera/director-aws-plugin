@@ -56,7 +56,7 @@ import java.util.Map;
 /**
  * Represents a template for constructing RDS database server instances.
  */
-@SuppressWarnings("PMD.TooManyStaticImports")
+@SuppressWarnings({"PMD.TooManyStaticImports", "Guava"})
 public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
 
   /**
@@ -158,7 +158,8 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
             "The instance class, which represents the compute and memory capacity"
                 + " of the DB instance.<br />" +
                 "<a target='_blank' href='http://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.html'>More Information</a>"
-        ).defaultErrorMessage("Instance class is mandatory")
+        ).defaultPlaceholder("Select an instance class")
+        .defaultErrorMessage("Instance class is mandatory")
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .addValidValues(
             "db.t1.micro",
@@ -237,6 +238,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
         .name("DB type")
         .required(true)
         .defaultDescription("The database type to be used for this instance.")
+        .defaultPlaceholder("Select a database type")
         .widget(ConfigurationProperty.Widget.LIST)
         .addValidValues(
             RDSEngine.getSupportedDatabaseTypeNamesAsArray()
@@ -412,7 +414,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
         .widget(ConfigurationProperty.Widget.OPENMULTI)
         .required(true)
         .defaultDescription(
-            "The comma-separated list of EC2 VPC security groups"
+            "The list of EC2 VPC security groups"
                 + " to associate with this DB instance. Must begin with sg-")
         .defaultErrorMessage("VPC security group IDs are mandatory")
         .build());
@@ -852,7 +854,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
     String stringConfigurationValue =
         getConfigurationValue(configurationPropertyToken, localizationContext);
     return (stringConfigurationValue == null)
-        ? Optional.<Integer>absent()
+        ? Optional.absent()
         : Optional.of(Integer.parseInt(stringConfigurationValue));
   }
 
@@ -869,7 +871,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
     String stringConfigurationValue =
         getConfigurationValue(configurationPropertyToken, localizationContext);
     return (stringConfigurationValue == null)
-        ? Optional.<Boolean>absent()
+        ? Optional.absent()
         : Optional.of(Boolean.parseBoolean(stringConfigurationValue));
   }
 
@@ -886,7 +888,7 @@ public class RDSInstanceTemplate extends DatabaseServerInstanceTemplate {
     String stringConfigurationValue =
         getConfigurationValue(configurationPropertyToken, localizationContext);
     return (stringConfigurationValue == null)
-        ? Optional.<List<String>>absent()
+        ? Optional.absent()
         : Optional.of(CSV_SPLITTER.splitToList(stringConfigurationValue));
   }
 

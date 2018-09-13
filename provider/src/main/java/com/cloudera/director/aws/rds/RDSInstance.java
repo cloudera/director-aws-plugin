@@ -55,7 +55,7 @@ public class RDSInstance extends AbstractDatabaseServerInstance<RDSInstanceTempl
   /**
    * RDS database server instance properties.
    */
-  public static enum RDSInstanceDisplayPropertyToken implements DisplayPropertyToken {
+  public enum RDSInstanceDisplayPropertyToken implements DisplayPropertyToken {
 
     /**
      * The allocated storage size in gigabytes.
@@ -458,7 +458,7 @@ public class RDSInstance extends AbstractDatabaseServerInstance<RDSInstanceTempl
      *
      * @param displayProperty the display property
      */
-    private RDSInstanceDisplayPropertyToken(SimpleDisplayProperty displayProperty) {
+    RDSInstanceDisplayPropertyToken(SimpleDisplayProperty displayProperty) {
       this.displayProperty = displayProperty;
     }
 
@@ -517,7 +517,7 @@ public class RDSInstance extends AbstractDatabaseServerInstance<RDSInstanceTempl
    * @param instanceIdentifier the instance identifier
    * @param instanceDetails    the provider-specific instance details
    */
-  protected RDSInstance(RDSInstanceTemplate template, String instanceIdentifier, DBInstance instanceDetails) {
+  public RDSInstance(RDSInstanceTemplate template, String instanceIdentifier, DBInstance instanceDetails) {
     super(template, instanceIdentifier, getPrivateIpAddress(instanceDetails), getPort(instanceDetails), instanceDetails);
   }
 

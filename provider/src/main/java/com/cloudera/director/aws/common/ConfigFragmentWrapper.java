@@ -62,7 +62,7 @@ public class ConfigFragmentWrapper implements Configured {
   @Override
   @SuppressWarnings("PMD.EmptyCatchBlock")
   public Map<String, String> getConfiguration(LocalizationContext localizationContext) {
-    Map<String, String> result = new HashMap<String, String>();
+    Map<String, String> result = new HashMap<>();
     for (ConfigurationProperty property : properties) {
       try {
         result.put(property.getConfigKey(), getConfigurationValue(property, localizationContext));

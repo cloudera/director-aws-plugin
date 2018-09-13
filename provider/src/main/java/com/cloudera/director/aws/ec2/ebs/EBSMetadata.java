@@ -50,6 +50,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
   /**
    * Contains metadata information for an EBS volume type.
    */
+  @SuppressWarnings("Guava")
   public static class EbsVolumeMetadata {
     private final String type;
     private final int minSizeGiB;
@@ -93,6 +94,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
       return maxIops;
     }
 
+    @SuppressWarnings("SimplifiableIfStatement")
     @Override
     public boolean equals(Object o) {
       if (this == o) return true;
@@ -124,7 +126,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
      * EBS metadata configuration properties.
      */
     // Fully qualifying class name due to compiler bug
-    public static enum EBSMetadataConfigurationPropertyToken
+    public enum EBSMetadataConfigurationPropertyToken
         implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
       /**
@@ -148,7 +150,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
        *
        * @param configurationProperty the configuration property
        */
-      private EBSMetadataConfigurationPropertyToken(
+      EBSMetadataConfigurationPropertyToken(
           ConfigurationProperty configurationProperty) {
         this.configurationProperty = configurationProperty;
       }
@@ -174,8 +176,8 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
      * @param cloudLocalizationContext the parent cloud localization context
      */
     public EBSMetadataConfigProperties(Configured configuration,
-                                        File configurationDirectory,
-                                        LocalizationContext cloudLocalizationContext) {
+        File configurationDirectory,
+        LocalizationContext cloudLocalizationContext) {
       this.configurationDirectory = configurationDirectory;
       LocalizationContext localizationContext = new ChildLocalizationContext(
           cloudLocalizationContext, "ebsMetadata");
@@ -246,12 +248,12 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
   /**
    * Creates EBS metadata with the specified parameters.
    *
-   * @param configuration               the configuration
-   * @param configurationDirectory      the plugin configuration directory
-   * @param localizationContext         the localization context
+   * @param configuration          the configuration
+   * @param configurationDirectory the plugin configuration directory
+   * @param localizationContext    the localization context
    */
   public EBSMetadata(Configured configuration, File configurationDirectory,
-                      LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
     this(new EBSMetadataConfigProperties(configuration, configurationDirectory,
         localizationContext));
   }
@@ -272,7 +274,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
    * @param ebsMetadataResolver         the ebs metadata resolver
    */
   private EBSMetadata(EBSMetadataConfigProperties ebsMetadataConfigProperties,
-                       PropertyResolver ebsMetadataResolver) {
+      PropertyResolver ebsMetadataResolver) {
     this.ebsMetadataConfigProperties = ebsMetadataConfigProperties;
     this.ebsMetadataResolver = ebsMetadataResolver;
   }
@@ -283,7 +285,7 @@ public class EBSMetadata implements Function<String, EBSMetadata.EbsVolumeMetada
    *
    * @param volumeType ebs volume type
    * @return metadata associated with the volume type
-   * @throws NullPointerException if no metadata could be found for a volume type
+   * @throws NullPointerException  if no metadata could be found for a volume type
    * @throws IllegalStateException if the metadata for a volume type has invalid format
    */
   @Override

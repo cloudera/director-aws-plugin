@@ -38,7 +38,7 @@ public class CustomTagMappings {
     ImmutableMap.Builder<String, String> b = ImmutableMap.builder();
 
     if (config != null) {
-      for (Map.Entry<String,ConfigValue> e : config.entrySet()) {
+      for (Map.Entry<String, ConfigValue> e : config.entrySet()) {
         String key = e.getKey();
         ConfigValue value = e.getValue();
         switch (value.valueType()) {
@@ -65,7 +65,7 @@ public class CustomTagMappings {
    * @return the custom tag name for the specified tag key if present, otherwise the key itself
    */
   public String getCustomTagName(String tagKey) {
-    return customTagNames.containsKey(tagKey) ? customTagNames.get(tagKey) : tagKey;
+    return customTagNames.getOrDefault(tagKey, tagKey);
   }
 
   /**

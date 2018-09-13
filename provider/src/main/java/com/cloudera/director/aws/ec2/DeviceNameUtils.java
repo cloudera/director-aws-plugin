@@ -15,6 +15,7 @@
 package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.spi.v2.util.Preconditions.checkArgument;
+
 import com.google.common.collect.Lists;
 
 import java.util.List;
@@ -30,10 +31,10 @@ public class DeviceNameUtils {
    * around to the beginning after 'z' to 'b'. Note that char 'a' is skipped because
    * it is usually reserved for root volumes.
    *
-   * @param pathPrefix the device name path prefix
+   * @param pathPrefix  the device name path prefix
    * @param startSuffix the character suffix to start with for the device name
-   * @param count the number of device names to return
-   * @param filter a set of device names to exclude
+   * @param count       the number of device names to return
+   * @param filter      a set of device names to exclude
    * @return list of device names
    */
   public List<String> getDeviceNames(String pathPrefix, char startSuffix, int count, Set<String> filter) {

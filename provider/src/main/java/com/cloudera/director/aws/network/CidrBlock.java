@@ -46,7 +46,7 @@ public final class CidrBlock {
    * Constructs a CidrBlock from CIDR notation.
    *
    * @param notation CIDR notation representing a block of IP addresses
-   * @return         a new CidrBlock object
+   * @return a new CidrBlock object
    */
   public static CidrBlock fromString(String notation) {
     Preconditions.checkNotNull(notation);
@@ -91,7 +91,7 @@ public final class CidrBlock {
    *
    * @param ipAddress an IP address (either IPv4 or Ipv6)
    * @param prefixLen the number of bits of the prefix in CIDR notation
-   * @return          the network address of the CIDR block where this IP address falls
+   * @return the network address of the CIDR block where this IP address falls
    */
   private static InetAddress mask(InetAddress ipAddress, int prefixLen) {
     byte[] bytes = ipAddress.getAddress();
@@ -119,7 +119,7 @@ public final class CidrBlock {
    * Checks if the given IP address is included in this CIDR block.
    *
    * @param address a IP address (either IPv4 or IPv6)
-   * @return        true if this IP address is included in this CIDR block
+   * @return true if this IP address is included in this CIDR block
    */
   public boolean contains(InetAddress address) {
     Preconditions.checkNotNull(address);
@@ -132,7 +132,7 @@ public final class CidrBlock {
    * Checks if the given CIDR block is a subset of the current CIDR block.
    *
    * @param cidr the CIDR block representing the other block of IP addresses
-   * @return     true if the given CIDR block is a subset of the current one
+   * @return true if the given CIDR block is a subset of the current one
    */
   public boolean contains(CidrBlock cidr) {
     Preconditions.checkNotNull(cidr);

@@ -16,6 +16,7 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.EC2Retryer.getTimeout;
 import static com.cloudera.director.aws.ec2.EC2Retryer.retryUntil;
+import static com.cloudera.director.aws.ec2.common.EC2Exceptions.INVALID_INSTANCE_ID_NOT_FOUND;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.fail;
 import static org.mockito.Mockito.atLeastOnce;
@@ -32,12 +33,13 @@ import java.util.concurrent.ExecutionException;
 
 import org.junit.Test;
 
+@SuppressWarnings("unchecked")
 public class EC2RetryerTest {
 
   @Test
   public void testRetrySucceeds() throws Exception {
-    AmazonServiceException exception = new AmazonServiceException(EC2Provider.INVALID_INSTANCE_ID_NOT_FOUND);
-    exception.setErrorCode(EC2Provider.INVALID_INSTANCE_ID_NOT_FOUND);
+    AmazonServiceException exception = new AmazonServiceException(INVALID_INSTANCE_ID_NOT_FOUND);
+    exception.setErrorCode(INVALID_INSTANCE_ID_NOT_FOUND);
     Integer result = 1;
 
     Callable<Integer> task = mock(Callable.class);
@@ -54,18 +56,13 @@ public class EC2RetryerTest {
   public void testRetryCanceledThrowsInterruptedException() throws Exception {
     final Thread currentThread = Thread.currentThread();
 
-    Thread t = new Thread(new Runnable() {
-      @Override
-      public void run() {
-        currentThread.interrupt();
-      }
-    });
-    t.start();
-
-    AmazonServiceException exception = new AmazonServiceException(EC2Provider.INVALID_INSTANCE_ID_NOT_FOUND);
-    exception.setErrorCode(EC2Provider.INVALID_INSTANCE_ID_NOT_FOUND);
+    AmazonServiceException exception = new AmazonServiceException(INVALID_INSTANCE_ID_NOT_FOUND);
+    exception.setErrorCode(INVALID_INSTANCE_ID_NOT_FOUND);
     Callable<Integer> task = mock(Callable.class);
     when(task.call()).thenThrow(exception);
+
+    Thread t = new Thread(currentThread::interrupt);
+    t.start();
 
     try {
       retryUntil(task);
@@ -91,7 +88,7 @@ public class EC2RetryerTest {
 
   @Test
   public void testGetDuration() {
-    getTimeout(DateTime.now().plus(10l));
-    getTimeout(DateTime.now().minus(10l));
+    getTimeout(DateTime.now().plus(10L));
+    getTimeout(DateTime.now().minus(10L));
   }
 }

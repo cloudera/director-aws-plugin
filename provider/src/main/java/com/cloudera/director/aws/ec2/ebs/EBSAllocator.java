@@ -16,7 +16,6 @@ package com.cloudera.director.aws.ec2.ebs;
 
 import static com.cloudera.director.aws.ec2.EC2Retryer.retryUntil;
 import static com.google.common.base.Preconditions.checkNotNull;
-import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
 
 import com.amazonaws.AmazonClientException;
@@ -54,7 +53,6 @@ import com.github.rholder.retry.RetryException;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.base.Optional;
 import com.google.common.base.Stopwatch;
-import com.google.common.collect.BiMap;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
@@ -99,9 +97,6 @@ public class EBSAllocator {
 
   private static final long DEFAULT_TIMEOUT_SECONDS = 180L;
 
-  private static final String INVALID_STATE_MISSING_KMS_KEY =
-      "EBS volumes should only be separately created when they need to be encrypted with a user specified KMS key";
-
   @VisibleForTesting
   static final String DEVICE_NAME_START_PREFIX = "/dev/sd";
 
@@ -120,10 +115,10 @@ public class EBSAllocator {
   /**
    * Constructs a new EBS allocator instance.
    *
-   * @param client       a pre-configured ec2 client
-   * @param awsTimeouts  the AWS timeouts
-   * @param ec2TagHelper the custom tag mappings
-   * @param ebsDeviceMappings helper object to retrieve device mappings
+   * @param client             a pre-configured ec2 client
+   * @param awsTimeouts        the AWS timeouts
+   * @param ec2TagHelper       the custom tag mappings
+   * @param ebsDeviceMappings  helper object to retrieve device mappings
    * @param excludeDeviceNames set of device names that should be excluded when attaching the volumes
    */
   public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts,
@@ -151,25 +146,25 @@ public class EBSAllocator {
 
     public static final String UNCREATED_VOLUME_ID = "uncreated";
 
-    private final String virtualInstanceId;
+    private final String instanceId;
     private final String ec2InstanceId;
     private final Map<String, VolumeState> volumeStates;
 
     /**
      * Constructor.
      *
-     * @param virtualInstanceId the Director virtual instance id
-     * @param ec2InstanceId     the AWS EC2 instance id
-     * @param volumeStates      the volume ids for each instance along with the status of the volume
+     * @param instanceId    the Director instance id
+     * @param ec2InstanceId the AWS EC2 instance id
+     * @param volumeStates  the volume ids for each instance along with the status of the volume
      */
-    public InstanceEbsVolumes(String virtualInstanceId, String ec2InstanceId, Map<String, VolumeState> volumeStates) {
-      this.virtualInstanceId = requireNonNull(virtualInstanceId, "virtualInstanceId is null");
+    public InstanceEbsVolumes(String instanceId, String ec2InstanceId, Map<String, VolumeState> volumeStates) {
+      this.instanceId = requireNonNull(instanceId, "instanceId is null");
       this.ec2InstanceId = requireNonNull(ec2InstanceId, "ec2InstanceId is null");
       this.volumeStates = ImmutableMap.copyOf(volumeStates);
     }
 
-    public String getVirtualInstanceId() {
-      return virtualInstanceId;
+    public String getInstanceId() {
+      return instanceId;
     }
 
     public String getEc2InstanceId() {
@@ -180,6 +175,7 @@ public class EBSAllocator {
       return volumeStates;
     }
 
+    @SuppressWarnings("SimplifiableIfStatement")
     @Override
     public boolean equals(Object o) {
       if (this == o) return true;
@@ -187,7 +183,7 @@ public class EBSAllocator {
 
       InstanceEbsVolumes that = (InstanceEbsVolumes) o;
 
-      if (!virtualInstanceId.equals(that.virtualInstanceId)) return false;
+      if (!instanceId.equals(that.instanceId)) return false;
       if (!ec2InstanceId.equals(that.ec2InstanceId)) return false;
       return volumeStates.equals(that.volumeStates);
 
@@ -195,7 +191,7 @@ public class EBSAllocator {
 
     @Override
     public int hashCode() {
-      int result = virtualInstanceId.hashCode();
+      int result = instanceId.hashCode();
       result = 31 * result + ec2InstanceId.hashCode();
       result = 31 * result + volumeStates.hashCode();
       return result;
@@ -204,7 +200,7 @@ public class EBSAllocator {
     @Override
     public String toString() {
       return "InstanceEbsVolumes{" +
-          "virtualInstanceId='" + virtualInstanceId + '\'' +
+          "instanceId='" + instanceId + '\'' +
           ", ec2InstanceId='" + ec2InstanceId + '\'' +
           ", volumeStates=" + volumeStates +
           '}';
@@ -216,15 +212,14 @@ public class EBSAllocator {
    * of volumes to create are taken from the instance template. Volumes are
    * tagged on creation.
    *
-   * @param template                          the instance template
-   * @param ec2InstanceIdsByVirtualInstanceId ids of the instances where the key is the virtual
-   *                                          instance id and the value is the ec2 instance id
+   * @param template                   the instance template
+   * @param ec2InstanceIdsByInstanceId ids of the instances where the key is the Director
+   *                                   instance id and the value is the ec2 instance id
    * @return a list of InstanceEbsVolumes
    */
+  @SuppressWarnings("Guava")
   public List<InstanceEbsVolumes> createVolumes(EC2InstanceTemplate template,
-      BiMap<String, String> ec2InstanceIdsByVirtualInstanceId) {
-    checkState(template.getEbsKmsKeyId().isPresent(), INVALID_STATE_MISSING_KMS_KEY);
-
+      Map<String, String> ec2InstanceIdsByInstanceId) {
     Optional<String> templateAvailabilityZone = template.getAvailabilityZone();
 
     String availabilityZone = templateAvailabilityZone.isPresent() ?
@@ -234,7 +229,7 @@ public class EBSAllocator {
     int volumesPerInstance = template.getEbsVolumeCount();
 
     LOG.info("Requesting {} volumes each for {} instances",
-        volumesPerInstance, ec2InstanceIdsByVirtualInstanceId.size());
+        volumesPerInstance, ec2InstanceIdsByInstanceId.size());
 
     int uncreatedVolumeCount = 0;
 
@@ -242,14 +237,14 @@ public class EBSAllocator {
     List<Tag> userDefinedTags = ec2TagHelper.getUserDefinedTags(template);
 
     List<InstanceEbsVolumes> instanceEbsVolumesList = Lists.newArrayList();
-    for (Map.Entry<String, String> entry : ec2InstanceIdsByVirtualInstanceId.entrySet()) {
-      String virtualInstanceId = entry.getKey();
+    for (Map.Entry<String, String> entry : ec2InstanceIdsByInstanceId.entrySet()) {
+      String instanceId = entry.getKey();
       String ec2InstanceId = entry.getValue();
 
       Map<String, VolumeState> volumes = Maps.newHashMap();
 
       // Tag these volumes on creation
-      List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+      List<Tag> tags = ec2TagHelper.getInstanceTags(template, instanceId, userDefinedTags);
       TagSpecification tagSpecification = new TagSpecification().withTags(tags).withResourceType(ResourceType.Volume);
 
       List<CreateVolumeRequest> createVolumeRequests = Lists.newArrayList();
@@ -281,15 +276,15 @@ public class EBSAllocator {
           String volumeId = result.getVolume().getVolumeId();
           volumes.put(volumeId, VolumeState.Creating);
         } catch (AmazonServiceException ex) {
-          String message = "Failed to request an EBS volume for virtual instance %s";
-          LOG.error(String.format(message, virtualInstanceId), ex);
+          String message = "Failed to request an EBS volume for instance %s";
+          LOG.error(String.format(message, instanceId), ex);
           String volumeId = InstanceEbsVolumes.UNCREATED_VOLUME_ID + uncreatedVolumeCount;
           volumes.put(volumeId, VolumeState.Error);
           uncreatedVolumeCount++;
         }
       }
 
-      InstanceEbsVolumes instanceEbsVolumes = new InstanceEbsVolumes(virtualInstanceId, ec2InstanceId, volumes);
+      InstanceEbsVolumes instanceEbsVolumes = new InstanceEbsVolumes(instanceId, ec2InstanceId, volumes);
       instanceEbsVolumesList.add(instanceEbsVolumes);
     }
     return instanceEbsVolumesList;
@@ -299,7 +294,7 @@ public class EBSAllocator {
    * Returns all volumes from a list of instance EBS volumes that have the specified status.
    */
   private static Set<String> getAllVolumeIdsWithState(List<InstanceEbsVolumes> instanceEbsVolumes,
-                                                      VolumeState desiredState) {
+      VolumeState desiredState) {
     Set<String> volumeIds = Sets.newHashSet();
     for (InstanceEbsVolumes instance : instanceEbsVolumes) {
       for (Map.Entry<String, VolumeState> volume : instance.getVolumeStates().entrySet()) {
@@ -315,7 +310,7 @@ public class EBSAllocator {
    * Returns true if all volumes for an instance has the expected status.
    */
   private static boolean instanceHasAllVolumesWithState(InstanceEbsVolumes instanceEbsVolumes,
-                                                        VolumeState expectedState) {
+      VolumeState expectedState) {
     int volumeCount = instanceEbsVolumes.getVolumeStates().size();
     Set<String> volumesWithExpectedState =
         getAllVolumeIdsWithState(Collections.singletonList(instanceEbsVolumes), expectedState);
@@ -407,7 +402,7 @@ public class EBSAllocator {
             VolumeState.Available : VolumeState.Error;
         updatedVolumes.put(volumeId, updatedState);
       }
-      updated.add(new InstanceEbsVolumes(instanceEbsVolumes.getVirtualInstanceId(),
+      updated.add(new InstanceEbsVolumes(instanceEbsVolumes.getInstanceId(),
           instanceEbsVolumes.getEc2InstanceId(), updatedVolumes));
     }
 
@@ -431,7 +426,7 @@ public class EBSAllocator {
     DateTime timeout = DateTime.now().plusSeconds((int) availableTimeoutSeconds);
 
     for (InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
-      String virtualInstanceId = instanceEbsVolumes.getVirtualInstanceId();
+      String instanceId = instanceEbsVolumes.getInstanceId();
       String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
 
       if (!instanceHasAllVolumesWithState(instanceEbsVolumes, VolumeState.Available)) {
@@ -447,7 +442,7 @@ public class EBSAllocator {
       int index = 0;
       for (String volumeId : instanceEbsVolumes.getVolumeStates().keySet()) {
         if (!useTagOnCreate) {
-          tagVolume(template, userDefinedTags, virtualInstanceId, volumeId);
+          tagVolume(template, userDefinedTags, instanceId, volumeId);
         }
 
         String deviceName = deviceNames.get(index);
@@ -461,12 +456,9 @@ public class EBSAllocator {
 
         try {
           retryUntil(
-              new Callable<Void>() {
-                @Override
-                public Void call() throws Exception {
-                  client.attachVolume(volumeRequest);
-                  return null;
-                }
+              (Callable<Void>) () -> {
+                client.attachVolume(volumeRequest);
+                return null;
               },
               timeout);
           requestedAttachments.add(volumeId);
@@ -495,7 +487,7 @@ public class EBSAllocator {
             VolumeState.InUse : VolumeState.Error;
         updatedVolumes.put(volumeId, updatedState);
       }
-      updated.add(new InstanceEbsVolumes(instanceEbsVolumes.getVirtualInstanceId(),
+      updated.add(new InstanceEbsVolumes(instanceEbsVolumes.getInstanceId(),
           instanceEbsVolumes.getEc2InstanceId(), updatedVolumes));
     }
 
@@ -581,7 +573,7 @@ public class EBSAllocator {
     }
 
     if (ex != null) {
-      AWSExceptions.propagate(ex);
+      throw AWSExceptions.propagate(ex);
     }
   }
 
@@ -595,52 +587,49 @@ public class EBSAllocator {
   public void addDeleteOnTerminationFlag(List<InstanceEbsVolumes> instanceEbsVolumesList) throws Exception {
     DateTime timeout = DateTime.now().plusSeconds((int) availableTimeoutSeconds);
     for (final InstanceEbsVolumes instanceEbsVolumes : instanceEbsVolumesList) {
-      Callable<Void> task = new Callable<Void>() {
-        @Override
-        public Void call() throws Exception {
-          String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
-          Set<String> managedVolumes = instanceEbsVolumes.getVolumeStates().keySet();
+      Callable<Void> task = () -> {
+        String ec2InstanceId = instanceEbsVolumes.getEc2InstanceId();
+        Set<String> managedVolumes = instanceEbsVolumes.getVolumeStates().keySet();
 
-          DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
-              .withAttribute(InstanceAttributeName.BlockDeviceMapping)
-              .withInstanceId(ec2InstanceId);
+        DescribeInstanceAttributeRequest instanceAttributeRequest = new DescribeInstanceAttributeRequest()
+            .withAttribute(InstanceAttributeName.BlockDeviceMapping)
+            .withInstanceId(ec2InstanceId);
 
-          List<InstanceBlockDeviceMapping> blockDeviceMappings =
-              client.describeInstanceAttribute(instanceAttributeRequest)
-                  .getInstanceAttribute()
-                  .getBlockDeviceMappings();
+        List<InstanceBlockDeviceMapping> blockDeviceMappings =
+            client.describeInstanceAttribute(instanceAttributeRequest)
+                .getInstanceAttribute()
+                .getBlockDeviceMappings();
 
-          for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
-            String volumeId = blockDeviceMapping.getEbs().getVolumeId();
+        for (InstanceBlockDeviceMapping blockDeviceMapping : blockDeviceMappings) {
+          String volumeId = blockDeviceMapping.getEbs().getVolumeId();
 
-            // The block device mapping may have volumes associated with it that were not
-            // provisioned by us. We skip marking those volumes for deletion.
+          // The block device mapping may have volumes associated with it that were not
+          // provisioned by us. We skip marking those volumes for deletion.
 
-            if (!managedVolumes.contains(volumeId)) {
-              continue;
-            }
-
-            InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
-                .withEbs(
-                    new EbsInstanceBlockDeviceSpecification()
-                        .withDeleteOnTermination(true)
-                        .withVolumeId(volumeId)
-                )
-                .withDeviceName(blockDeviceMapping.getDeviceName());
-
-            ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
-                .withBlockDeviceMappings(updatedSpec)
-                .withInstanceId(ec2InstanceId);
-
-            try {
-              client.modifyInstanceAttribute(modifyRequest);
-            } catch (AmazonClientException e) {
-              LOG.error("Volume {} failed to attach.", volumeId);
-            }
+          if (!managedVolumes.contains(volumeId)) {
+            continue;
           }
 
-          return null;
+          InstanceBlockDeviceMappingSpecification updatedSpec = new InstanceBlockDeviceMappingSpecification()
+              .withEbs(
+                  new EbsInstanceBlockDeviceSpecification()
+                      .withDeleteOnTermination(true)
+                      .withVolumeId(volumeId)
+              )
+              .withDeviceName(blockDeviceMapping.getDeviceName());
+
+          ModifyInstanceAttributeRequest modifyRequest = new ModifyInstanceAttributeRequest()
+              .withBlockDeviceMappings(updatedSpec)
+              .withInstanceId(ec2InstanceId);
+
+          try {
+            client.modifyInstanceAttribute(modifyRequest);
+          } catch (AmazonClientException e) {
+            LOG.error("Volume {} failed to attach.", volumeId);
+          }
         }
+
+        return null;
       };
 
       retryUntil(task, timeout);
@@ -675,7 +664,7 @@ public class EBSAllocator {
         }
       }
 
-      updatedInstanceEbsVolumesList.add(new InstanceEbsVolumes(instanceEbsVolumes.getVirtualInstanceId(),
+      updatedInstanceEbsVolumesList.add(new InstanceEbsVolumes(instanceEbsVolumes.getInstanceId(),
           instanceEbsVolumes.getEc2InstanceId(), volumeStatuses));
     }
 
@@ -735,16 +724,16 @@ public class EBSAllocator {
    * Tags an EBS volume. Expects that the volume already exists or is in the process of
    * being created.
    *
-   * @param template          the instance template
-   * @param userDefinedTags   the user-defined tags
-   * @param virtualInstanceId the virtual instance id of it's associated instance
-   * @param volumeId          the volume id
+   * @param template        the instance template
+   * @param userDefinedTags the user-defined tags
+   * @param instanceId      the Director instance id of its associated instance
+   * @param volumeId        the volume id
    * @throws InterruptedException if the operation is interrupted
    */
   private void tagVolume(EC2InstanceTemplate template, List<Tag> userDefinedTags,
-      String virtualInstanceId, String volumeId) throws InterruptedException {
-    LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
-    List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
+      String instanceId, String volumeId) throws InterruptedException {
+    LOG.info(">> Tagging volume {} / {}", volumeId, instanceId);
+    List<Tag> tags = ec2TagHelper.getInstanceTags(template, instanceId, userDefinedTags);
     client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
   }
 

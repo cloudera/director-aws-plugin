@@ -51,6 +51,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
+import com.cloudera.director.aws.rds.provider.RDSProvider;
 import com.cloudera.director.aws.shaded.com.amazonaws.AmazonServiceException;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.rds.AmazonRDSClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.rds.model.DBEngineVersion;

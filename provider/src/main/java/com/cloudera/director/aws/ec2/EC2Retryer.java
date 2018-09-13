@@ -14,53 +14,27 @@
 
 package com.cloudera.director.aws.ec2;
 
-import com.amazonaws.AmazonServiceException;
+import com.cloudera.director.aws.AWSExceptions;
 import com.github.rholder.retry.RetryException;
 import com.github.rholder.retry.Retryer;
 import com.github.rholder.retry.RetryerBuilder;
 import com.github.rholder.retry.StopStrategies;
 import com.github.rholder.retry.WaitStrategies;
 import com.google.common.annotations.VisibleForTesting;
-import com.google.common.base.Predicate;
 
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
-import javax.annotation.Nonnull;
-
 import org.joda.time.DateTime;
 import org.joda.time.Duration;
 import org.joda.time.Interval;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 
 public class EC2Retryer {
 
   // backoff not resulted from contention, so fixed interval
   private static final Duration DEFAULT_BACKOFF = Duration.standardSeconds(5);
   private static final Duration DEFAULT_TIMEOUT = Duration.millis(Long.MAX_VALUE);
-  private static final String NOT_FOUND_ERROR_CODE = ".NotFound";
-  private static final String RESOURCE_NOT_FOUND = "Resource not found, might be a transient error";
-  private static final Logger LOG = LoggerFactory.getLogger(EC2Retryer.class);
-
-  static final Predicate<Throwable> NOT_FOUND = new Predicate<Throwable>() {
-    @Override
-    public boolean apply(@Nonnull Throwable throwable) {
-      boolean retryNeeded = AmazonServiceException.class.isInstance(throwable)
-          && ((AmazonServiceException) throwable).getErrorCode().endsWith(NOT_FOUND_ERROR_CODE);
-
-      if (retryNeeded) {
-        if (LOG.isDebugEnabled()) {
-          LOG.debug(RESOURCE_NOT_FOUND, throwable);
-        } else if (LOG.isInfoEnabled()) {
-          LOG.info(RESOURCE_NOT_FOUND);
-        }
-      }
-
-      return retryNeeded;
-    }
-  };
 
   private EC2Retryer() {
     throw new IllegalStateException("static class");
@@ -92,7 +66,7 @@ public class EC2Retryer {
     Retryer<T> retryer = RetryerBuilder.<T>newBuilder()
         .withWaitStrategy(WaitStrategies.fixedWait(backoff.getMillis(), TimeUnit.MILLISECONDS))
         .withStopStrategy(StopStrategies.stopAfterDelay(timeout.getMillis(), TimeUnit.MILLISECONDS))
-        .retryIfException(NOT_FOUND)
+        .retryIfException(AWSExceptions::isNotFound)
         .build();
 
     try {

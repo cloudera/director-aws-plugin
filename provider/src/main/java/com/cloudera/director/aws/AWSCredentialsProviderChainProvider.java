@@ -64,20 +64,21 @@ public class AWSCredentialsProviderChainProvider
   private final List<RoleConfiguration> roleConfigurations;
 
   /**
-   * Creates an instance of AWS crendential provider chain provider.
+   * Creates an instance of AWS credential provider chain provider.
    */
   public AWSCredentialsProviderChainProvider() {
     this(null);
   }
 
   /**
-   * Creates an instance of AWS crendential provider chain provider.
+   * Creates an instance of AWS credential provider chain provider.
+   *
    * @param roleConfigurations the role configurations
    */
   public AWSCredentialsProviderChainProvider(List<RoleConfiguration> roleConfigurations) {
     this.roleConfigurations = roleConfigurations != null
         ? ImmutableList.copyOf(roleConfigurations)
-        : Collections.<RoleConfiguration>emptyList();
+        : Collections.emptyList();
   }
 
   /**
@@ -104,6 +105,7 @@ public class AWSCredentialsProviderChainProvider
    * Config-based AWS credentials provider provider.
    */
   // Fully qualifying class names due to compiler bug
+  @SuppressWarnings("Guava")
   public static class AWSConfigCredentialsProviderProvider
       extends com.cloudera.director.spi.v2.model.util.AbstractConfigured {
 

@@ -17,7 +17,7 @@ package com.cloudera.director.aws;
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.google.common.base.Preconditions.checkState;
 import static java.util.Objects.requireNonNull;
-import static org.springframework.util.StringUtils.isEmpty;
+import static org.apache.commons.lang3.StringUtils.isEmpty;
 
 import com.amazonaws.annotation.ThreadSafe;
 import com.amazonaws.auth.AWSSessionCredentials;
@@ -37,7 +37,6 @@ import com.google.common.collect.FluentIterable;
 import java.util.List;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -47,19 +46,17 @@ import javax.annotation.Nullable;
  * Credential provider to provider session credentials after assuming role n
  * times.
  */
+@SuppressWarnings("Guava")
 @ThreadSafe
 public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCredentialsProvider {
   private static final int DEFAULT_DURATION_SECONDS = 900;
   private static final int DEFAULT_BLOCKING_REFRESH_DURATION_MSEC = 60 * 1000;
   private static final int DEFAULT_ASYNC_REFRESH_DURATION_MSEC = 300 * 1000;
   private static final ScheduledExecutorService EXECUTOR = Executors.newSingleThreadScheduledExecutor(
-      new ThreadFactory() {
-        @Override
-        public Thread newThread(Runnable runnable) {
-          Thread thread = Executors.defaultThreadFactory().newThread(runnable);
-          thread.setDaemon(true);
-          return thread;
-        }
+      runnable -> {
+        Thread thread = Executors.defaultThreadFactory().newThread(runnable);
+        thread.setDaemon(true);
+        return thread;
       });
 
   private final AtomicReference<Credentials> credentials = new AtomicReference<>(null);
@@ -88,19 +85,14 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
     this.scopeDownPolicy = scopeDownPolicy;
 
     EXECUTOR.scheduleWithFixedDelay(
-        new Runnable() {
+        () -> refreshSession(new Predicate<Credentials>() {
           @Override
-          public void run() {
-            refreshSession(new Predicate<Credentials>() {
-              @Override
-              public boolean apply(@Nullable Credentials credentials) {
-                return isRefreshNeeded(
-                    credentials,
-                    STSAssumeNRolesSessionCredentialsProvider.this.asyncRefreshDurationMsec);
-              }
-            });
+          public boolean apply(@Nullable Credentials credentials) {
+            return isRefreshNeeded(
+                credentials,
+                STSAssumeNRolesSessionCredentialsProvider.this.asyncRefreshDurationMsec);
           }
-        },
+        }),
         this.blockingRefreshDurationMsec,
         this.asyncRefreshDurationMsec,
         TimeUnit.MILLISECONDS);
@@ -108,19 +100,14 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
   @Override
   public AWSSessionCredentials getCredentials() {
-    refreshSession(new Predicate<Credentials>() {
-      @Override
-      public boolean apply(@Nullable Credentials credentials) {
-        return isRefreshNeeded(credentials, blockingRefreshDurationMsec);
-      }
-    });
+    refreshSession(credentials -> isRefreshNeeded(credentials, blockingRefreshDurationMsec));
 
     return toAWSCredentials(this.credentials.get());
   }
 
   @Override
   public void refresh() {
-    refreshSession(Predicates.<Credentials>alwaysTrue());
+    refreshSession(Predicates.alwaysTrue());
   }
 
   private void refreshSession(Predicate<Credentials> predicate) {
@@ -208,6 +195,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Creates an instance of builder.
+     *
      * @param roleConfigurations a list of {@linkplain RoleConfiguration} to be assumed.
      *                           The list should be ordered from the first role to be assumed to the last
      * @param stsClientBuilder   an instance of AWS STS client builder
@@ -221,15 +209,12 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
       this.roleConfigurations = FluentIterable
           .from(requireNonNull(roleConfigurations, "roleConfigurations is null"))
           .filter(
-              new Predicate<RoleConfiguration>() {
-                @Override
-                public boolean apply(@Nullable RoleConfiguration roleConfiguration) {
-                  if (roleConfiguration != null
-                      && (isEmpty(roleConfiguration.getRoleArn()) || isEmpty(roleConfiguration.getRoleSessionName()))) {
-                    throw new IllegalArgumentException("You must specify both roleArn and roleSessionName");
-                  }
-                  return roleConfiguration != null;
+              roleConfiguration -> {
+                if (roleConfiguration != null
+                    && (isEmpty(roleConfiguration.getRoleArn()) || isEmpty(roleConfiguration.getRoleSessionName()))) {
+                  throw new IllegalArgumentException("You must specify both roleArn and roleSessionName");
                 }
+                return roleConfiguration != null;
               })
           .toList();
 
@@ -249,6 +234,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets an instance of {@linkplain AWSSecurityTokenServiceClientBuilder}.
+     *
      * @return an instance of AWS STS service client builder.
      */
     public AWSSecurityTokenServiceClientBuilder getStsClientBuilder() {
@@ -257,6 +243,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gests role session duration in seconds.
+     *
      * @return role session duration in seconds
      */
     public int getRoleSessionDurationSeconds() {
@@ -265,7 +252,8 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Sets role session duration in seconds.
-     * @param roleSessionDurationSeconds
+     *
+     * @param roleSessionDurationSeconds the role session duration in seconds
      */
     public Builder withRoleSessionDurationSeconds(int roleSessionDurationSeconds) {
       if (roleSessionDurationSeconds >= DEFAULT_DURATION_SECONDS && roleSessionDurationSeconds <= 3600) {
@@ -278,6 +266,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets scope down policy of the last role.
+     *
      * @return role scope down policy
      */
     public String getScopeDownPolicy() {
@@ -286,7 +275,8 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
 
     /**
-     * Sets scope down plicy of the last role.
+     * Sets scope down policy of the last role.
+     *
      * @param scopeDownPolicy scope down policy of the last role
      */
     public Builder withScopeDownPolicy(String scopeDownPolicy) {
@@ -296,6 +286,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets blocking refresh duration in milliseconds.
+     *
      * @return blocking refresh duration in milliseconds
      */
     public int getBlockingRefreshDurationMsec() {
@@ -304,6 +295,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Sets blocking refresh duration in milliseconds.
+     *
      * @param blockingRefreshDurationMsec blocking refresh duration in milliseconds
      */
     public Builder withBlockingRefreshDurationMsec(int blockingRefreshDurationMsec) {
@@ -314,6 +306,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets async refresh duration in milliseconds.
+     *
      * @return async refresh duration in  milliseconds
      */
     public int getAsyncRefreshDurationMsec() {
@@ -322,6 +315,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Sets async refresh duration in milliseconds.
+     *
      * @param asyncRefreshDurationMsec async refresh duration in milliseconds
      */
     public Builder withAsyncRefreshDurationMsec(int asyncRefreshDurationMsec) {
@@ -332,6 +326,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Creates a new instance of {@linkplain STSAssumeNRolesSessionCredentialsProvider}.
+     *
      * @return a new instance of STS credential provider which can assume several roles in sequence
      */
     public STSAssumeNRolesSessionCredentialsProvider build() {
@@ -355,7 +350,8 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Creates an instance of role configuration.
-     * @param roleArn role Arn
+     *
+     * @param roleArn         role Arn
      * @param roleSessionName role session name
      */
     public RoleConfiguration(String roleArn, String roleSessionName) {
@@ -364,9 +360,10 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Creates an instance of role configuration.
-     * @param roleArn role Arn
+     *
+     * @param roleArn         role Arn
      * @param roleSessionName role session name
-     * @param roleExternalId role external Id
+     * @param roleExternalId  role external Id
      */
     public RoleConfiguration(String roleArn, String roleSessionName, String roleExternalId) {
       checkArgument(!isEmpty(roleArn), "roleArn is empty");
@@ -379,6 +376,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets role session name.
+     *
      * @return role session name
      */
     public String getRoleSessionName() {
@@ -387,6 +385,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets role external Id.
+     *
      * @return role external Id
      */
     public String getRoleExternalId() {
@@ -395,6 +394,7 @@ public class STSAssumeNRolesSessionCredentialsProvider implements AWSSessionCred
 
     /**
      * Gets role Arn.
+     *
      * @return role Arn
      */
     public String getRoleArn() {

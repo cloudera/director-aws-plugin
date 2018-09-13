@@ -1,4 +1,16 @@
-//  (c) Copyright 2015 Cloudera, Inc.
+// (c) Copyright 2015 Cloudera, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.cloudera.director.aws;
 
@@ -11,7 +23,6 @@ import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccu
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionDetails;
 import com.cloudera.director.spi.v2.model.exception.TransientProviderException;
 import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
-import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
@@ -60,30 +71,33 @@ public class AWSExceptions {
   }
 
   /**
-   * Insufficient instance capacity error code..
+   * Insufficient instance capacity error code.
    */
-  private static final String INSUFFICIENT_INSTANCE_CAPACITY = "InsufficientInstanceCapacity";
+  public static final String INSUFFICIENT_INSTANCE_CAPACITY = "InsufficientInstanceCapacity";
 
   /**
    * Instance limit exceeded error code.
    */
-  @VisibleForTesting
   public static final String INSTANCE_LIMIT_EXCEEDED = "InstanceLimitExceeded";
 
   /**
    * Request limit exceeded error code..
    */
-  private static final String REQUEST_LIMIT_EXCEEDED = "RequestLimitExceeded";
+  public static final String REQUEST_LIMIT_EXCEEDED = "RequestLimitExceeded";
 
   /**
    * Volume limit exceeded error code.
    */
-  @VisibleForTesting
   public static final String VOLUME_LIMIT_EXCEEDED = "Client.VolumeLimitExceeded";
+
+  /**
+   * Internal error error code.
+   */
+  public static final String INTERNAL_ERROR = "InternalError";
 
 
   // The set of error codes representing authorization failures.
-  private static final Set<String> AUTHORIZATION_ERROR_CODES = ImmutableSet.of(
+  public static final Set<String> AUTHORIZATION_ERROR_CODES = ImmutableSet.of(
       "AuthFailure",
       "UnauthorizedOperation"
   );
@@ -93,21 +107,20 @@ public class AWSExceptions {
    * Parses a set of exceptions and a set of failed state reasons and throws
    * an appropriate plugin exception with appropriate plugin exception details.
    * This will throw an {@link UnrecoverableProviderException} if the exception
-   * set contains any Amazon exceptions that are unrecoverable. An
-   * UnrecoverableProviderException will also be thrown if the set of failed state
-   * reason is not empty. In other cases a {@link TransientProviderException} is
-   * thrown.
+   * set contains any exceptions that are unrecoverable. An UnrecoverableProviderException
+   * will also be thrown if the set of failed state reason is not empty. In other cases a
+   * {@link TransientProviderException} is thrown.
    *
-   * @param message the plugin exception message to set
-   * @param exceptions a set of exceptions
+   * @param message            the plugin exception message to set
+   * @param exceptions         a set of exceptions
    * @param failedStateReasons state reasons for instances that transitioned to terminated
-   * @param template the EC2 instance template
+   * @param template           the EC2 instance template
    */
   public static void propagate(String message, Set<Exception> exceptions,
-                               Set<StateReason> failedStateReasons, EC2InstanceTemplate template) {
+      Set<StateReason> failedStateReasons, EC2InstanceTemplate template) {
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
 
-    boolean isUnrecoverable = addExceptionErrors(template, exceptions, accumulator);
+    boolean isUnrecoverable = addErrors(template, exceptions, accumulator);
 
     if (!failedStateReasons.isEmpty()) {
       isUnrecoverable = true;
@@ -142,7 +155,26 @@ public class AWSExceptions {
     }
   }
 
-  private static boolean isUnrecoverable(AmazonClientException e) {
+  /**
+   * Returns whether the specified throwable is unrecoverable, treating any throwable that is
+   * not an Amazon client exception to be unrecoverable.
+   *
+   * @param t the throwable
+   * @return whether the specified throwable is unrecoverable
+   */
+  public static boolean isUnrecoverable(Throwable t) {
+    return !(t instanceof AmazonClientException) || isUnrecoverable((AmazonClientException) t);
+  }
+
+  /**
+   * Returns whether the specified Amazon client exception is unrecoverable, considering a few
+   * categories of exception as unrecoverable in addition to those which are flagged as not
+   * retryable by Amazon.
+   *
+   * @param e the Amazon client exception
+   * @return whether the specified Amazon client exception is unrecoverable
+   */
+  public static boolean isUnrecoverable(AmazonClientException e) {
     if (e instanceof AmazonServiceException) {
       AmazonServiceException ase = (AmazonServiceException) e;
       if (AUTHORIZATION_ERROR_CODES.contains(ase.getErrorCode())) {
@@ -157,16 +189,19 @@ public class AWSExceptions {
       // * Unsupported exception is also unrecoverable, since it represents an unsupported request.
       //   See docs at http://docs.aws.amazon.com/AWSEC2/latest/APIReference/errors-overview.html
       // * InvalidParameterValue is unrecoverable, as one of the parameters supplied by the user is invalid.
+      // * PendingVerification is unrecoverable since it can take up to 2 hours for verification to complete.
       if (ase.getErrorType() == AmazonServiceException.ErrorType.Client ||
           "OperationNotPermitted".equals(ase.getErrorCode()) ||
           "Unsupported".equals(ase.getErrorCode()) ||
-          "InvalidParameterValue".equals(ase.getErrorCode())) {
+          "InvalidParameterValue".equals(ase.getErrorCode()) ||
+          "PendingVerification".equals(ase.getErrorCode())) {
         return true;
       }
 
-      // Consider instance limits and insufficient capacity as unrecoverable
+      // Consider instance limits, insufficient capacity, and internal error as unrecoverable
       if (INSTANCE_LIMIT_EXCEEDED.equals(ase.getErrorCode()) ||
-          INSUFFICIENT_INSTANCE_CAPACITY.equals(ase.getErrorCode())) {
+          INSUFFICIENT_INSTANCE_CAPACITY.equals(ase.getErrorCode()) ||
+          INTERNAL_ERROR.equals(ase.getErrorCode())) {
         return true;
       }
     }
@@ -188,28 +223,43 @@ public class AWSExceptions {
   }
 
   /**
-   * Converts a list of exceptions to plugin error conditions. These conditions
-   * will be added to the provided accumulator. Returns whether an unrecoverable
-   * exception is present in provided exceptions.
+   * Returns whether the specified throwable is an {@code AmazonServiceException} with
+   * the specified error code.
    *
-   * @param template the EC2 instance template
-   * @param exceptions the list of encountered exceptions
+   * @param throwable the throwable
+   * @param errorCode the error code
+   * @return whether the specified throwable is an {@code AmazonServiceException} with
+   * the specified error code
+   */
+  public static boolean isAmazonServiceException(Throwable throwable, String errorCode) {
+    return (throwable instanceof AmazonServiceException)
+        && errorCode.equals(((AmazonServiceException) throwable).getErrorCode());
+  }
+
+  /**
+   * Converts a set of exceptions to plugin error conditions. These conditions
+   * will be added to the provided accumulator. Returns whether an unrecoverable
+   * error is present in provided exceptions.
+   *
+   * @param template    the EC2 instance template
+   * @param exceptions  the list of encountered exceptions
    * @param accumulator the exception condition accumulator to add to
    * @return whether an unrecoverable exception is present
    */
-  private static boolean addExceptionErrors(EC2InstanceTemplate template,
-                                            Set<Exception> exceptions,
-                                            PluginExceptionConditionAccumulator accumulator) {
+  private static boolean addErrors(EC2InstanceTemplate template,
+      Set<Exception> exceptions,
+      PluginExceptionConditionAccumulator accumulator) {
     boolean hasUnrecoverableExceptions = false;
 
+    // Only report each error code once
     Map<String, AmazonServiceException> awsExceptions = Maps.newHashMap();
-    for (Exception ex : exceptions) {
-      if (ex instanceof AmazonServiceException) {
-        AmazonServiceException awsEx = (AmazonServiceException) ex;
+    for (Exception e : exceptions) {
+      hasUnrecoverableExceptions = hasUnrecoverableExceptions || isUnrecoverable(e);
+      if (e instanceof AmazonServiceException) {
+        AmazonServiceException awsEx = (AmazonServiceException) e;
         awsExceptions.put(awsEx.getErrorCode(), awsEx);
-        hasUnrecoverableExceptions = hasUnrecoverableExceptions || isUnrecoverable(awsEx);
       } else {
-        accumulator.addError(toExceptionInfoMap(ex.getMessage(), "N/A", "N/A"));
+        accumulator.addError(toExceptionInfoMap(e.getMessage(), "N/A", "N/A"));
       }
     }
 
@@ -221,8 +271,8 @@ public class AWSExceptions {
   }
 
   private static void addStateReasonErrors(EC2InstanceTemplate template,
-                                           Set<StateReason> stateReasons,
-                                           PluginExceptionConditionAccumulator accumulator) {
+      Set<StateReason> stateReasons,
+      PluginExceptionConditionAccumulator accumulator) {
     for (StateReason stateReason : stateReasons) {
       String stateReasonCode = stateReason.getCode();
       String stateReasonMessage = stateReason.getMessage();
@@ -238,7 +288,7 @@ public class AWSExceptions {
   }
 
   private static Map<String, String> toExceptionInfoMap(EC2InstanceTemplate template,
-                                                        AmazonServiceException ex) {
+      AmazonServiceException ex) {
     String awsErrorCode = ex.getErrorCode();
     String message = "Encountered AWS exception";
 
@@ -263,7 +313,7 @@ public class AWSExceptions {
   }
 
   private static Map<String, String> toExceptionInfoMap(String message, String awsErrorCode,
-                                                        String awsErrorMessage) {
+      String awsErrorMessage) {
     return ImmutableMap.of(
         "message", message,
         "awsErrorCode", awsErrorCode,

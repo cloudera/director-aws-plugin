@@ -27,6 +27,7 @@ import com.cloudera.director.aws.ec2.VirtualizationMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSMetadata;
 import com.cloudera.director.aws.network.NetworkRules;
+import com.cloudera.director.aws.provider.AWSProvider;
 import com.cloudera.director.aws.rds.RDSEncryptionInstanceClasses;
 import com.cloudera.director.aws.rds.RDSEndpoints;
 import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
@@ -98,7 +99,7 @@ public class AWSLauncher extends AbstractLauncher {
   }
 
   private static ConfigurationPropertyToken[] getEphemeralConfigurationPropertyTokens() {
-    ConfigurationPropertyToken[] ephemeralTokens =  EphemeralDeviceMappingsConfigurationPropertyToken.values();
+    ConfigurationPropertyToken[] ephemeralTokens = EphemeralDeviceMappingsConfigurationPropertyToken.values();
     ConfigurationPropertyToken[] deviceMappingTokens = DeviceMappingsConfigurationPropertyToken.values();
     return ObjectArrays.concat(ephemeralTokens, deviceMappingTokens, ConfigurationPropertyToken.class);
   }
@@ -112,7 +113,7 @@ public class AWSLauncher extends AbstractLauncher {
    * @return the EBS metadata
    */
   private static EBSMetadata getEBSMetadata(Config config,
-                                            File configurationDirectory, LocalizationContext cloudLocalizationContext) {
+      File configurationDirectory, LocalizationContext cloudLocalizationContext) {
     return new EBSMetadata(getConfiguration(config,
         Configurations.EBS_METADATA_SECTION,
         EBSMetadata.EBSMetadataConfigProperties.EBSMetadataConfigurationPropertyToken.values()),
@@ -200,7 +201,7 @@ public class AWSLauncher extends AbstractLauncher {
 
   private static AWSTimeouts getAWSTimeouts(Config config) {
     return new AWSTimeouts(config == null || !config.hasPath(Configurations.AWS_TIMEOUTS_SECTION) ?
-                           null : config.getConfig(Configurations.AWS_TIMEOUTS_SECTION));
+        null : config.getConfig(Configurations.AWS_TIMEOUTS_SECTION));
   }
 
   private static CustomTagMappings getCustomTagMappings(Config config) {
@@ -234,34 +235,34 @@ public class AWSLauncher extends AbstractLauncher {
   }
 
   @VisibleForTesting
-  protected EphemeralDeviceMappings ephemeralDeviceMappings;
+  EphemeralDeviceMappings ephemeralDeviceMappings;
 
   @VisibleForTesting
-  protected EBSDeviceMappings ebsDeviceMappings;
+  EBSDeviceMappings ebsDeviceMappings;
 
   @VisibleForTesting
-  protected EBSMetadata ebsMetadata;
+  EBSMetadata ebsMetadata;
 
   @VisibleForTesting
-  protected VirtualizationMappings virtualizationMappings;
+  VirtualizationMappings virtualizationMappings;
 
   @VisibleForTesting
-  protected RDSEndpoints rdsEndpoints;
+  RDSEndpoints rdsEndpoints;
 
   @VisibleForTesting
-  protected RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses;
+  RDSEncryptionInstanceClasses rdsEncryptionInstanceClasses;
 
   @VisibleForTesting
-  protected AWSClientConfig awsClientConfig;
+  AWSClientConfig awsClientConfig;
 
   @VisibleForTesting
-  protected AWSFilters awsFilters;
+  AWSFilters awsFilters;
 
   @VisibleForTesting
-  protected AWSTimeouts awsTimeouts;
+  AWSTimeouts awsTimeouts;
 
   @VisibleForTesting
-  protected CustomTagMappings customTagMappings;
+  CustomTagMappings customTagMappings;
 
   private NetworkRules networkRules;
 

@@ -1,4 +1,4 @@
-## Amazon Web Services (AWS) plugin for Cloudera Director
+## Amazon Web Services (AWS) plugin for Cloudera Altus Director
 
 * [Introduction](#introduction)
 * [Getting started](#getting-started)
@@ -9,15 +9,15 @@
 
 ### Introduction
 
-This project defines an [open source](http://www.apache.org/licenses/LICENSE-2.0) plugin implementing the [Cloudera Director Service Provider Interface](https://github.com/cloudera/director-spi) (Director SPI) for [Amazon Web Services](http://aws.amazon.com) (AWS).
+This project defines an [open source](http://www.apache.org/licenses/LICENSE-2.0) plugin implementing the [Cloudera Altus Director Service Provider Interface](https://github.com/cloudera/director-spi) (Director SPI) for [Amazon Web Services](http://aws.amazon.com) (AWS).
 
 The plugin implements a compute provider that allocates [Amazon Elastic Compute Cloud](http://aws.amazon.com/ec2/) (EC2) instances, and a database server provider that allocates [Amazon Relational Database Service](http://aws.amazon.com/rds/) (RDS) instances.
 
 ### Getting started
 
-Because the AWS plugin ships with Cloudera Director, these instructions are primarily geared towards plugin authors, who may be interested in using this plugin as an example or a base for their own plugins. They assume familiarity with git, github, maven, and other software development technologies; AWS concepts and terminology; and some familiarity with Cloudera Director and the Director SPI.
+Because the AWS plugin ships with Cloudera Altus Director, these instructions are primarily geared towards plugin authors, who may be interested in using this plugin as an example or a base for their own plugins. They assume familiarity with git, github, maven, and other software development technologies; AWS concepts and terminology; and some familiarity with Cloudera Altus Director and the Director SPI.
 
-Additional details can be found in the source code, in the [AWS Plugin javadoc](http://cloudera.github.io/director-aws-plugin/apidocs/), and in the [Cloudera Director User Guide](http://www.cloudera.com/content/cloudera/en/documentation/cloudera-director/latest/PDF/cloudera-director.pdf).
+Additional details can be found in the source code, in the [AWS Plugin javadoc](http://cloudera.github.io/director-aws-plugin/apidocs/), and in the [Cloudera Altus Director User Guide](http://www.cloudera.com/content/cloudera/en/documentation/cloudera-director/latest/PDF/cloudera-director.pdf).
 
 Prior to using the plugin, you will need to have AWS credentials.
 

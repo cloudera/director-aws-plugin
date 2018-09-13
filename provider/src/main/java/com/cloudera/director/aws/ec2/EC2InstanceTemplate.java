@@ -14,6 +14,8 @@
 
 package com.cloudera.director.aws.ec2;
 
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ALLOCATE_EBS_SEPARATELY;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AUTOMATIC_INSTANCE_PROCESSING;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.AVAILABILITY_ZONE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_IOPS;
@@ -31,6 +33,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ROOT_VOLUME_TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SECURITY_GROUP_IDS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_PRICE_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SYSTEM_DISKS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
@@ -60,7 +63,7 @@ import java.util.Map;
 /**
  * Represents a template for constructing EC2 compute instances.
  */
-@SuppressWarnings("PMD.TooManyStaticImports")
+@SuppressWarnings({"PMD.TooManyStaticImports", "Guava"})
 public class EC2InstanceTemplate extends ComputeInstanceTemplate {
 
   /**
@@ -71,7 +74,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   /**
    * A splitter for comma-separated lists.
    */
-  protected static final Splitter CSV_SPLITTER = Splitter.on(",").trimResults().omitEmptyStrings();
+  public static final Splitter CSV_SPLITTER = Splitter.on(",").trimResults().omitEmptyStrings();
 
   /**
    * The list of configuration properties (including inherited properties).
@@ -97,8 +100,28 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    * EC2 compute instance configuration properties.
    */
   // Fully qualifying class name due to compiler bug
-  public static enum EC2InstanceTemplateConfigurationPropertyToken
+  public enum EC2InstanceTemplateConfigurationPropertyToken
       implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
+
+    /**
+     * Whether to allow AWS Auto Scaling to automatically perform certain operations on Auto Scaling
+     * instances, such as replacing those that fail health checks or rebalancing availability zones.
+     *
+     * @see <a href="http://docs.aws.amazon.com/autoscaling/ec2/userguide/as-suspend-resume-processes.html">Suspending and Resuming Scaling Processes</a>
+     */
+    AUTOMATIC_INSTANCE_PROCESSING(new SimpleConfigurationPropertyBuilder()
+        .configKey("enableAutomaticInstanceProcesing")
+        .name("Enable automatic instance processing")
+        .defaultValue("false")
+        .type(Property.Type.BOOLEAN)
+        .defaultDescription(
+            "Whether to allow AWS Auto Scaling to automatically perform certain operations on " +
+                "Auto Scaling instances, such as replacing those that fail health checks or " +
+                "rebalancing availability zones.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/autoscaling/ec2/userguide/as-suspend-resume-processes.html'>More Information</a>"
+        ).widget(ConfigurationProperty.Widget.CHECKBOX)
+        .hidden(true)
+        .build()),
 
     /**
      * <p>The availability zone.</p>
@@ -138,44 +161,44 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
      * Number of additional EBS volumes to mount.
      */
     EBS_VOLUME_COUNT(new SimpleConfigurationPropertyBuilder()
-      .configKey("ebsVolumeCount")
-      .name("EBS Volume Count")
-      .defaultValue("0")
-      .defaultDescription(
-        "The number of additional EBS volumes to mount. Cloudera Director will create and attach these volumes to the " +
-          "provisioned instance. These added volumes will be deleted when the instance is terminated from Director. <br />" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumes.html'>More Information</a>"
-      ).widget(ConfigurationProperty.Widget.NUMBER)
-      .type(Property.Type.INTEGER)
-      .build()),
+        .configKey("ebsVolumeCount")
+        .name("EBS Volume Count")
+        .defaultValue("0")
+        .defaultDescription(
+            "The number of additional EBS volumes to mount. Cloudera Altus Director will create and attach these volumes to the " +
+                "provisioned instance. These added volumes will be deleted when the instance is terminated from Director. <br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumes.html'>More Information</a>"
+        ).widget(ConfigurationProperty.Widget.NUMBER)
+        .type(Property.Type.INTEGER)
+        .build()),
 
     /**
      * The size of the additional EBS volume in GiB.
      */
     EBS_VOLUME_SIZE_GIB(new SimpleConfigurationPropertyBuilder()
-      .configKey("ebsVolumeSizeGiB")
-      .name("EBS Volume Size (GiB)")
-      .defaultValue("500")
-      .defaultDescription(
-        "The size of the additional EBS volume(s) in GiB."
-      ).widget(ConfigurationProperty.Widget.NUMBER)
-      .type(Property.Type.INTEGER)
-      .build()),
+        .configKey("ebsVolumeSizeGiB")
+        .name("EBS Volume Size (GiB)")
+        .defaultValue("500")
+        .defaultDescription(
+            "The size of the additional EBS volume(s) in GiB."
+        ).widget(ConfigurationProperty.Widget.NUMBER)
+        .type(Property.Type.INTEGER)
+        .build()),
 
     /**
      * The volume type of the additional EBS volumes.
      */
     EBS_VOLUME_TYPE(new SimpleConfigurationPropertyBuilder()
-      .configKey("ebsVolumeType")
-      .name("EBS Volume Type")
-      .addValidValues("st1", "sc1", "gp2", "io1")
-      .defaultValue("st1")
-      .defaultDescription(
-        "The EBS volume type for the additional EBS volumes. Supported volumes are Throughput Optimized HDD (st1), " +
-          "Cold HDD (sc1), General Purpose SSD (gp2) and Provisioned IOPS SSD (io1) <br />" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html'>More Information</a>"
-      ).widget(ConfigurationProperty.Widget.OPENLIST)
-      .build()),
+        .configKey("ebsVolumeType")
+        .name("EBS Volume Type")
+        .addValidValues("st1", "sc1", "gp2", "io1")
+        .defaultValue("st1")
+        .defaultDescription(
+            "The EBS volume type for the additional EBS volumes. Supported volumes are Throughput Optimized HDD (st1), " +
+                "Cold HDD (sc1), General Purpose SSD (gp2) and Provisioned IOPS SSD (io1) <br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html'>More Information</a>"
+        ).widget(ConfigurationProperty.Widget.OPENLIST)
+        .build()),
 
     /**
      * The number of I/O operations per second (IOPS) when using io1 volume types.
@@ -236,6 +259,22 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         ).build()),
 
     /**
+     * Whether to allocate EBS volumes separately when using non-default KMS Key ID.
+     */
+    ALLOCATE_EBS_SEPARATELY(new SimpleConfigurationPropertyBuilder()
+        .configKey("allocateEbsSeparately")
+        .name("Allocate EBS volumes separately")
+        .defaultValue("false")
+        .type(Property.Type.BOOLEAN)
+        .defaultDescription(
+            "Whether to allocate EBS volumes separately when using non-default KMS Key ID. This should" +
+                "only be enabled on certain regions (like GovCloud) that don't allow specifying EBS KMS" +
+                "Key ID as part of the instance launch request."
+        ).widget(ConfigurationProperty.Widget.CHECKBOX)
+        .hidden(true)
+        .build()),
+
+    /**
      * Name of the IAM instance profile.
      *
      * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html">IAM Roles</a>
@@ -244,8 +283,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .configKey("iamProfileName")
         .name("IAM profile name")
         .defaultDescription(
-          "The IAM instance profile name.<br />" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html'>More Information</a>"
+            "The IAM instance profile name.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/iam-roles-for-amazon-ec2.html'>More Information</a>"
         ).build()),
 
     /**
@@ -258,13 +297,14 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .defaultDescription(
             "Must begin with 'ami-'.<br/><br/>" +
-            "To learn more about which AMIs should be used, please see the " +
-            "<a target='_blank' href='http://www.cloudera.com/content/cloudera/en/documentation/cloudera-director/latest/topics/director_deployment_requirements.html'>Cloudera Director Deployment Requirements Guide</a> " +
-            "about what operating systems when deploying a Cloudera Manager or CDH Cluster.<br/><br/>" +
-            "See the AWS documentation on " +
-            "<a target='_blank' href='https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AMIs.html'>Amazon Machine Images</a> " +
-            "for more information."
-        ).defaultErrorMessage("Image (AMI) ID is mandatory")
+                "To learn more about which AMIs should be used, please see the " +
+                "<a target='_blank' href='http://www.cloudera.com/content/cloudera/en/documentation/cloudera-director/latest/topics/director_deployment_requirements.html'>Cloudera Altus Director Deployment Requirements Guide</a> " +
+                "about what operating systems when deploying a Cloudera Manager or CDH Cluster.<br/><br/>" +
+                "See the AWS documentation on " +
+                "<a target='_blank' href='https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/AMIs.html'>Amazon Machine Images</a> " +
+                "for more information."
+        ).defaultPlaceholder("Enter or select an image")
+        .defaultErrorMessage("Image (AMI) ID is mandatory")
         .build()),
 
     /**
@@ -292,9 +332,9 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .configKey("placementGroup")
         .name("Placement group")
         .defaultDescription("The placement group name should be defined here. " +
-          "This setting allows users to launch the desired instance in a defined placement group. " +
-          "Instances using placement groups will deploy in a specific zone within a region which helps network performance. <br/>" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html'>More information</a>")
+            "This setting allows users to launch the desired instance in a defined placement group. " +
+            "Instances using placement groups will deploy in a specific zone within a region which helps network performance. <br/>" +
+            "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/placement-groups.html'>More information</a>")
         .build()),
 
     /**
@@ -305,10 +345,10 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .name("Root volume size (GB)")
         .defaultValue("50")
         .defaultDescription(
-          "Specify a size for the root volume (in GB). " +
-          "Cloudera Director will automatically expand the filesystem so that you can use all " +
-          "the available disk space for your application.<br />" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/storage_expand_partition.html'>More Information</a>"
+            "Specify a size for the root volume (in GB). " +
+                "Cloudera Altus Director will automatically expand the filesystem so that you can use all " +
+                "the available disk space for your application.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/storage_expand_partition.html'>More Information</a>"
         ).widget(ConfigurationProperty.Widget.NUMBER)
         .type(Property.Type.INTEGER)
         .build()),
@@ -324,8 +364,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .defaultValue("gp2")
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .defaultDescription(
-          "Specify the type of the EBS volume used for the root partition. The choices for AWS are gp2 and standard. Defaults to gp2.<br/>" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html'>More Information</a>"
+            "Specify the type of the EBS volume used for the root partition. The choices for AWS are gp2 and standard. Defaults to gp2.<br/>" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/EBSVolumeTypes.html'>More Information</a>"
         ).addValidValues(
             "gp2",
             "standard")
@@ -342,8 +382,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .widget(ConfigurationProperty.Widget.OPENMULTI)
         .required(true)
         .defaultDescription(
-          "Specify the list of security group IDs. Must begin with 'sg-'.<br />" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_SecurityGroups.html'>More Information</a>"
+            "Specify the list of security group IDs. Must begin with 'sg-'.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_SecurityGroups.html'>More Information</a>"
         ).defaultErrorMessage("VPC security group IDs are mandatory")
         .build()),
 
@@ -359,29 +399,44 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .defaultValue("false")
         .type(Property.Type.BOOLEAN)
         .defaultDescription("Whether to use Spot Instances. " +
-            "Since Spot Instances can be terminated unexpectedly if the Spot market price increases, " +
+            "Since Spot Instances can be terminated unexpectedly if the EC2 Spot price increases, " +
             "they should be used only for workers, and not for nodes that must be reliable, " +
             "such as masters and data nodes.<br />" +
             "<a target='_blank' href='http://aws.amazon.com/ec2/spot/'>More Information</a>")
-         .build()),
+        .build()),
 
     /**
      * Spot bid in USD/hr.
+     *
+     * @deprecated Use {@link #SPOT_PRICE_USD_PER_HR} instead.
      */
     SPOT_BID_USD_PER_HR(new SimpleConfigurationPropertyBuilder()
         .configKey("spotBidUSDPerHr")
         .name("Spot bid (USD/hr)")
         .defaultDescription(
             "Specify a Spot bid (in USD/hr). " +
-                "The Spot bid is the amount you are willing to pay per hour for each Spot Instance. " +
-                "Requests for Spot Instances will not be granted if the Spot bid is below " +
-                "the current Spot market price, and Spot Instances will be terminated if " +
-                "the Spot market price rises above the Spot bid. " +
-                "The Spot bid is required if you are using Spot Instances.<br />" +
-                "<a target='_blank' href='https://aws.amazon.com/ec2/spot/bid-advisor/'>More Information</a>"
+                "This property is deprecated in favor of spotPriceUSDPerHr, but still works as " +
+                "an alternative name for spotPriceUSDPerHr. This property will be removed in a " +
+                "future plugin release."
         ).widget(ConfigurationProperty.Widget.NUMBER)
         .type(Property.Type.DOUBLE)
-        .defaultErrorMessage("Spot bid is mandatory when using Spot Instances")
+        .hidden(true)
+        .build()),
+
+    /**
+     * Spot price in USD/hr.
+     */
+    SPOT_PRICE_USD_PER_HR(new SimpleConfigurationPropertyBuilder()
+        .configKey("spotPriceUSDPerHr")
+        .name("Spot price (USD/hr)")
+        .defaultDescription(
+            "Specify a Spot price (in USD/hr). " +
+                "The Spot price is the maximum amount you are willing to pay per hour for each Spot Instance. " +
+                "When your Spot price exceeds the Spot price set by EC2, then EC2 fulfills your request, " +
+                "if capacity is available. Spot Instances will be terminated if the Spot price set by EC2 " +
+                "rises above your Spot price."
+        ).widget(ConfigurationProperty.Widget.NUMBER)
+        .type(Property.Type.DOUBLE)
         .build()),
 
     /**
@@ -414,8 +469,8 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .name("VPC subnet ID")
         .required(true)
         .defaultDescription(
-          "The VPC subnet ID.<br />" +
-          "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_Subnets.html'>More Information</a>"
+            "The VPC subnet ID.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/VPC_Subnets.html'>More Information</a>"
         ).defaultErrorMessage("VPC subnet ID is mandatory")
         .build()),
 
@@ -427,18 +482,18 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
      * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/how-dedicated-hosts-work.html">Using Dedicated Hosts</a>
      */
     TENANCY(new SimpleConfigurationPropertyBuilder()
-            .configKey("tenancy")
-            .name("Tenancy")
-            .defaultValue("default")
-            .widget(ConfigurationProperty.Widget.LIST)
-            .defaultDescription(
-              "Instance tenancy should be defined here. This setting allows users to launch the desired instance in VPC with a defined tenancy. <br/>" +
-              "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/dedicated-instance.html'>More information</a>"
-            ).addValidValues(
-              "default",
-              "dedicated"
-            )
-            .build()),
+        .configKey("tenancy")
+        .name("Tenancy")
+        .defaultValue("default")
+        .widget(ConfigurationProperty.Widget.LIST)
+        .defaultDescription(
+            "Instance tenancy should be defined here. This setting allows users to launch the desired instance in VPC with a defined tenancy. <br/>" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/AmazonVPC/latest/UserGuide/dedicated-instance.html'>More information</a>"
+        ).addValidValues(
+            "default",
+            "dedicated"
+        )
+        .build()),
 
     /**
      * The instance type (e.g. t1.micro, m1.medium, etc.).
@@ -449,9 +504,10 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .required(true)
         .widget(ConfigurationProperty.Widget.OPENLIST)
         .defaultDescription(
-          "Select an instance type as per the needs of the processes to be run on this instance.<br />" +
-          "<a target='_blank' href='http://aws.amazon.com/ec2/instance-types/'>More Information</a>"
-        ).defaultErrorMessage("Instance type is mandatory")
+            "Select an instance type as per the needs of the processes to be run on this instance.<br />" +
+                "<a target='_blank' href='http://aws.amazon.com/ec2/instance-types/'>More Information</a>"
+        ).defaultPlaceholder("Select an instance type")
+        .defaultErrorMessage("Instance type is mandatory")
         .addValidValues(
             "t2.micro",
             "t2.small",
@@ -563,7 +619,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
         .configKey("userDataUnencoded")
         .name("User data (unencoded)")
         .required(false)
-        .widget(ConfigurationProperty.Widget.TEXT)
+        .widget(ConfigurationProperty.Widget.TEXTAREA)
         .defaultDescription(
             "The user data, unencoded.<br />" +
                 "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html'>More Information</a>"
@@ -580,7 +636,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
      *
      * @param configurationProperty the configuration property
      */
-    private EC2InstanceTemplateConfigurationPropertyToken(ConfigurationProperty configurationProperty) {
+    EC2InstanceTemplateConfigurationPropertyToken(ConfigurationProperty configurationProperty) {
       this.configurationProperty = configurationProperty;
     }
 
@@ -676,6 +732,11 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final Optional<String> ebsKmsKeyId;
 
   /**
+   * Whether to allocate EBS volumes separately when using non-default KMS Key ID.
+   */
+  private final boolean allocateEbsSeparately;
+
+  /**
    * The optional IAM profile name.
    */
   private final Optional<String> iamProfileName;
@@ -691,9 +752,9 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   private final boolean useSpotInstances;
 
   /**
-   * The Spot bid, in USD/hr.
+   * The Spot price, in USD/hr.
    */
-  private final Optional<BigDecimal> spotBidUSDPerHour;
+  private final Optional<BigDecimal> spotPriceUSDPerHour;
 
   /**
    * The block duration in minutes for Spot block instances.
@@ -704,6 +765,12 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    * The user data, base64 encoded.
    */
   private final Optional<String> userData;
+
+  /**
+   * Whether to allow AWS Auto Scaling to automatically perform certain operations on Auto Scaling
+   * instances, such as replacing those that fail health checks or rebalancing availability zones.
+   */
+  private final boolean enableAutomaticInstanceProcesing;
 
   /**
    * Creates an EC2 instance template with the specified parameters.
@@ -742,11 +809,14 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
 
     Optional<String> strEbsIops = Optional.fromNullable(getConfigurationValue(EBS_IOPS, localizationContext));
     this.ebsIops = strEbsIops.isPresent() ?
-        Optional.of(Integer.parseInt(strEbsIops.get())) : Optional.<Integer>absent();
+        Optional.of(Integer.parseInt(strEbsIops.get())) : Optional.absent();
 
     this.enableEbsEncryption =
         Boolean.parseBoolean(getConfigurationValue(ENCRYPT_ADDITIONAL_EBS_VOLUMES, localizationContext));
     this.ebsKmsKeyId = Optional.fromNullable(getConfigurationValue(EBS_KMS_KEY_ID, localizationContext));
+
+    this.allocateEbsSeparately =
+        Boolean.parseBoolean(getConfigurationValue(ALLOCATE_EBS_SEPARATELY, localizationContext));
 
     this.systemDisks =
         SystemDisk.parse(getConfigurationValue(SYSTEM_DISKS, localizationContext));
@@ -759,22 +829,27 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
     boolean useSpotInstances =
         Boolean.parseBoolean(getConfigurationValue(USE_SPOT_INSTANCES, localizationContext));
     this.useSpotInstances = useSpotInstances;
-    String spotBidUSDPerHourString = getConfigurationValue(SPOT_BID_USD_PER_HR, localizationContext);
-    this.spotBidUSDPerHour = useSpotInstances
-        ? Optional.of(new BigDecimal(spotBidUSDPerHourString))
-        : Optional.<BigDecimal>absent();
+    Optional<String> spotPriceUSDPerHourString =
+        Optional.fromNullable(getConfigurationValue(SPOT_PRICE_USD_PER_HR, localizationContext))
+            .or(Optional.fromNullable(getConfigurationValue(SPOT_BID_USD_PER_HR, localizationContext)));
+    this.spotPriceUSDPerHour = useSpotInstances && spotPriceUSDPerHourString.isPresent()
+        ? Optional.of(new BigDecimal(spotPriceUSDPerHourString.get()))
+        : Optional.absent();
     String blockDurationMinutesString = Strings.emptyToNull(
         getConfigurationValue(BLOCK_DURATION_MINUTES, localizationContext));
     this.blockDurationMinutes = useSpotInstances && blockDurationMinutesString != null
         ? Optional.of(Integer.parseInt(blockDurationMinutesString))
-        : Optional.<Integer>absent();
+        : Optional.absent();
 
     this.userData =
         Optional.fromNullable(getConfigurationValue(USER_DATA, localizationContext))
             .or(Optional.fromNullable(base64Encode(getConfigurationValue(USER_DATA_UNENCODED, localizationContext))));
+
+    this.enableAutomaticInstanceProcesing =
+        Boolean.parseBoolean(getConfigurationValue(AUTOMATIC_INSTANCE_PROCESSING, localizationContext));
   }
 
-  private final String base64Encode(String s) {
+  private String base64Encode(String s) {
     if (s == null) {
       return null;
     }
@@ -822,13 +897,15 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    *
    * @return tenancy
    */
-  public String getTenancy() { return tenancy; }
+  public String getTenancy() {
+    return tenancy;
+  }
 
-    /**
-     * Returns the subnet ID.
-     *
-     * @return the subnet ID
-     */
+  /**
+   * Returns the subnet ID.
+   *
+   * @return the subnet ID
+   */
   public String getSubnetId() {
     return subnetId;
   }
@@ -924,6 +1001,15 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   }
 
   /**
+   * Returns whether to allocate EBS volumes separately when using non-default KMS Key ID.
+   *
+   * @return whether to allocate EBS volumes separately when using non-default KMS Key ID
+   */
+  public boolean isAllocateEbsSeparately() {
+    return allocateEbsSeparately;
+  }
+
+  /**
    * Returns the system disks.
    *
    * @return the system disk.
@@ -960,12 +1046,12 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
   }
 
   /**
-   * Returns the Spot bid, in USD/hr.
+   * Returns the Spot price, in USD/hr.
    *
-   * @return the Spot bid, in USD/hr
+   * @return the Spot price, in USD/hr
    */
-  public Optional<BigDecimal> getSpotBidUSDPerHour() {
-    return spotBidUSDPerHour;
+  public Optional<BigDecimal> getSpotPriceUSDPerHour() {
+    return spotPriceUSDPerHour;
   }
 
   /**
@@ -984,5 +1070,16 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
    */
   public Optional<String> getUserData() {
     return userData;
+  }
+
+  /**
+   * Returns whether to allow AWS Auto Scaling to automatically perform certain operations on Auto Scaling
+   * instances, such as replacing those that fail health checks or rebalancing availability zones.
+   *
+   * @return whether to allow AWS Auto Scaling to automatically perform certain operations on Auto Scaling
+   * instances, such as replacing those that fail health checks or rebalancing availability zones
+   */
+  public boolean isEnableAutomaticInstanceProcesing() {
+    return enableAutomaticInstanceProcesing;
   }
 }

@@ -20,4 +20,8 @@
         <Field name="virtualizationMappings" />
         <Bug code="UrF" />
     </Match>
+    <Match>
+        <Class name="com.cloudera.director.aws.ec2.ebs.EBSMetadata" />
+        <Bug code="NP" />
+    </Match>
 </FindBugsFilter>

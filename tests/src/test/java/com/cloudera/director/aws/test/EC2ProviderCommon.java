@@ -18,12 +18,13 @@ import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.Tags;
-import com.cloudera.director.aws.common.AWSKMSClientProvider;
-import com.cloudera.director.aws.common.AmazonEC2ClientProvider;
-import com.cloudera.director.aws.common.AmazonIdentityManagementClientProvider;
+import com.cloudera.director.aws.clientprovider.AWSKMSClientProvider;
+import com.cloudera.director.aws.clientprovider.AmazonAutoScalingClientProvider;
+import com.cloudera.director.aws.clientprovider.AmazonEC2ClientProvider;
+import com.cloudera.director.aws.clientprovider.AmazonIdentityManagementClientProvider;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
-import com.cloudera.director.aws.ec2.EC2Provider;
-import com.cloudera.director.aws.ec2.EC2ProviderParameterizedLiveTest;
+import com.cloudera.director.aws.ec2.provider.EC2Provider;
+import com.cloudera.director.aws.ec2.provider.EC2ProviderParameterizedLiveTest;
 import com.cloudera.director.aws.ec2.EphemeralDeviceMappings;
 import com.cloudera.director.aws.ec2.VirtualizationMappings;
 import com.cloudera.director.aws.ec2.ebs.EBSDeviceMappings;
@@ -221,6 +222,7 @@ public class EC2ProviderCommon {
         customTagMappings,
         NetworkRules.EMPTY_RULES,
         amazonEC2ClientProvider,
+        new AmazonAutoScalingClientProvider(credentialsProvider, clientConfiguration),
         new AmazonIdentityManagementClientProvider(credentialsProvider, clientConfiguration),
         new AWSKMSClientProvider(credentialsProvider, clientConfiguration),
         true,

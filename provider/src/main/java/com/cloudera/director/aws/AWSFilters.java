@@ -1,4 +1,16 @@
-//  (c) Copyright 2015 Cloudera, Inc.
+// (c) Copyright 2015 Cloudera, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.cloudera.director.aws;
 
@@ -16,6 +28,7 @@ import java.util.Map;
  * Provides a nested hierarchy of named filter maps,
  * to be used for blacklists or whitelists.
  */
+@SuppressWarnings("Guava")
 public class AWSFilters {
 
   /**
@@ -32,7 +45,7 @@ public class AWSFilters {
    * Empty filters.
    */
   public static final AWSFilters EMPTY_FILTERS =
-      new AWSFilters(Optional.<Config>absent());
+      new AWSFilters(Optional.absent());
 
   /**
    * Returns AWS filters based on the specified configuration.
@@ -93,7 +106,7 @@ public class AWSFilters {
     try {
       filterMap = config.isPresent()
           ? HoconConfigUtils.getStringMap(config.get(), HoconConfigUtils.asConfigKey(key))
-          : Collections.<String, String>emptyMap();
+          : Collections.emptyMap();
     } catch (Exception e) {
       filterMap = Collections.emptyMap();
     }

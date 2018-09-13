@@ -23,10 +23,11 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
-import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+
+import javax.annotation.Nullable;
 
 /**
  * This class represents an extra EBS volume that will get mounted. This is a temporary
@@ -42,10 +43,10 @@ public class SystemDisk {
   /**
    * Constructor.
    *
-   * @param volumeType the ebs volume type
-   * @param volumeSize the ebs volume size in GiB
+   * @param volumeType       the ebs volume type
+   * @param volumeSize       the ebs volume size in GiB
    * @param enableEncryption whether to enable ebs encryption
-   * @param kmsKeyId optional encryption KMS key id
+   * @param kmsKeyId         optional encryption KMS key id
    */
   @JsonCreator
   public SystemDisk(
@@ -77,15 +78,15 @@ public class SystemDisk {
   }
 
   BlockDeviceMapping toBlockDeviceMapping(String deviceName) {
-    if (kmsKeyId != null) {
-      throw new IllegalStateException("Can't have block device mapping with KMS Key ID");
-    }
-
     EbsBlockDevice ebs = new EbsBlockDevice()
         .withVolumeType(getVolumeType())
         .withVolumeSize(getVolumeSize())
         .withEncrypted(isEnableEncryption())
         .withDeleteOnTermination(true);
+
+    if (getKmsKeyId() != null) {
+      ebs.withKmsKeyId(kmsKeyId);
+    }
 
     return new BlockDeviceMapping()
         .withDeviceName(deviceName)
@@ -93,7 +94,7 @@ public class SystemDisk {
   }
 
   CreateVolumeRequest toCreateVolumeRequest(String availabilityZone,
-                                            TagSpecification tagSpecification) {
+      TagSpecification tagSpecification) {
     return new CreateVolumeRequest()
         .withVolumeType(getVolumeType())
         .withSize(getVolumeSize())
@@ -110,7 +111,8 @@ public class SystemDisk {
 
     ObjectMapper mapper = new ObjectMapper();
     try {
-      return mapper.readValue(systemDisksJson, new TypeReference<List<SystemDisk>>(){});
+      return mapper.readValue(systemDisksJson, new TypeReference<List<SystemDisk>>() {
+      });
     } catch (Exception e) {
       throw new IllegalArgumentException(
           "Failed to parse system systemDisks Json: " + systemDisksJson, e);

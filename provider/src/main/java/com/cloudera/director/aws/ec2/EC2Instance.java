@@ -59,7 +59,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
   /**
    * EC2 compute instance display properties.
    */
-  public static enum EC2InstanceDisplayPropertyToken implements DisplayPropertyToken {
+  public enum EC2InstanceDisplayPropertyToken implements DisplayPropertyToken {
 
     /**
      * The architecture of the image.
@@ -453,11 +453,11 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
      * The tenancy type of the instance.
      */
     TENANCY(new SimpleDisplayPropertyBuilder()
-      .displayKey("tenancy")
-      .name("Tenancy")
-      .defaultDescription("Tenancy of the instance.")
-      .sensitive(false)
-      .build()) {
+        .displayKey("tenancy")
+        .name("Tenancy")
+        .defaultDescription("Tenancy of the instance.")
+        .sensitive(false)
+        .build()) {
       @Override
       protected String getPropertyValue(Instance instance) {
         return instance.getPlacement().getTenancy();
@@ -504,7 +504,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
      *
      * @param displayProperty the display property
      */
-    private EC2InstanceDisplayPropertyToken(DisplayProperty displayProperty) {
+    EC2InstanceDisplayPropertyToken(DisplayProperty displayProperty) {
       this.displayProperty = displayProperty;
     }
 
@@ -528,7 +528,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
    *
    * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/virtualization_types.html"/>
    */
-  private static enum EC2VirtualizationType {
+  private enum EC2VirtualizationType {
 
     /**
      * Hardware virtual machine (HVM).
@@ -578,7 +578,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
      *                           {@code Instance.getVirtualizationType()}.
      * @param virtualizationType the provider-agnostic virtualization type
      */
-    private EC2VirtualizationType(String key, VirtualizationType virtualizationType) {
+    EC2VirtualizationType(String key, VirtualizationType virtualizationType) {
       this.key = key;
       this.virtualizationType = virtualizationType;
     }
@@ -616,7 +616,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
    * @return the private IP address of the specified EC2 instance
    * @throws IllegalArgumentException if the instance does not have a valid private IP address
    */
-  static InetAddress getPrivateIpAddress(Instance instance) {
+  public static InetAddress getPrivateIpAddress(Instance instance) {
     Preconditions.checkNotNull(instance, "instance is null");
     InetAddress privateIpAddress = null;
     try {
@@ -652,7 +652,7 @@ public class EC2Instance extends AbstractComputeInstance<EC2InstanceTemplate, In
    * @param instanceDetails the provider-specific instance details
    * @throws IllegalArgumentException if the instance does not have a valid private IP address
    */
-  protected EC2Instance(EC2InstanceTemplate template, String instanceId, Instance instanceDetails) {
+  public EC2Instance(EC2InstanceTemplate template, String instanceId, Instance instanceDetails) {
     super(template, instanceId, getPrivateIpAddress(instanceDetails),
         getVirtualizationType(instanceDetails), instanceDetails);
   }

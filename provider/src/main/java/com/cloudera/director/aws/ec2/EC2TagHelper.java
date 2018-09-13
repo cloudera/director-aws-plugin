@@ -17,11 +17,21 @@ package com.cloudera.director.aws.ec2;
 import com.amazonaws.services.ec2.model.Tag;
 import com.cloudera.director.aws.AbstractAWSTagHelper;
 import com.cloudera.director.aws.CustomTagMappings;
+import com.cloudera.director.aws.Tags;
+import com.cloudera.director.spi.v2.model.exception.UnrecoverableProviderException;
+
+import java.util.Map;
 
 /**
  * Helper class for creating EC2 tags with custom tag names.
  */
 public class EC2TagHelper extends AbstractAWSTagHelper<Tag> {
+
+  /**
+   * The maximum number of allowed user-defined tags.
+   */
+  public static final int MAX_TAGS_ALLOWED =
+      50 - Tags.InstanceTags.values().length - Tags.ResourceTags.values().length;
 
   /**
    * Creates an EC2 tag helper with the specified parameters.
@@ -42,5 +52,20 @@ public class EC2TagHelper extends AbstractAWSTagHelper<Tag> {
   @Override
   public Tag createTagImpl(String tagKey, String tagValue) {
     return new Tag(tagKey, tagValue);
+  }
+
+
+  /**
+   * Validate tags input.
+   * A null tags map is allowed.
+   * Number of entries should not exceed {@link #MAX_TAGS_ALLOWED}.
+   *
+   * @param tags given map of tags
+   */
+  public void validateTags(Map<String, String> tags) {
+    if (tags != null && tags.size() > MAX_TAGS_ALLOWED) {
+      throw new UnrecoverableProviderException("Number of tags exceeds the maximum of " +
+          MAX_TAGS_ALLOWED);
+    }
   }
 }

@@ -16,11 +16,13 @@ package com.cloudera.director.aws.ec2;
 
 import static com.cloudera.director.aws.ec2.DeviceMappingsConfigProperties.DeviceMappingsConfigurationPropertyToken.DEVICE_NAME_PREFIX;
 import static com.cloudera.director.aws.ec2.DeviceMappingsConfigProperties.DeviceMappingsConfigurationPropertyToken.RANGE_START;
+
 import com.cloudera.director.spi.v2.model.ConfigurationProperty;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
 import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -32,6 +34,7 @@ public abstract class DeviceMappingsConfigProperties {
   private static final Logger LOG = LoggerFactory.getLogger(DeviceMappingsConfigProperties.class);
 
   public abstract String getDefaultDeviceNamePrefix();
+
   public abstract char getDefaultRangeStart();
 
   private String configSection;
@@ -39,10 +42,10 @@ public abstract class DeviceMappingsConfigProperties {
   private char rangeStart = getDefaultRangeStart();
 
   /**
-   *  Device mappings configuration properties.
+   * Device mappings configuration properties.
    */
   // Fully qualifying class name due to compiler bug
-  public static enum DeviceMappingsConfigurationPropertyToken
+  public enum DeviceMappingsConfigurationPropertyToken
       implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
@@ -91,7 +94,7 @@ public abstract class DeviceMappingsConfigProperties {
    * @param cloudLocalizationContext the parent cloud localization context
    */
   public DeviceMappingsConfigProperties(String configSection, Configured configuration,
-                                        LocalizationContext cloudLocalizationContext) {
+      LocalizationContext cloudLocalizationContext) {
     LocalizationContext localizationContext = new ChildLocalizationContext(
         cloudLocalizationContext, configSection);
     this.configSection = configSection;

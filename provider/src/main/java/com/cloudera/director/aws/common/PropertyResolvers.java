@@ -59,7 +59,7 @@ public final class PropertyResolvers {
     checkNotNull(m, "map is null");
     MutablePropertySources sources = new MutablePropertySources();
     sources.addFirst(new MapPropertySource("map",
-        ImmutableMap.<String, Object>copyOf(m)));
+        ImmutableMap.copyOf(m)));
     return new PropertySourcesPropertyResolver(sources);
   }
 
@@ -129,7 +129,7 @@ public final class PropertyResolvers {
       throws IOException {
     try {
       return new ResourcePropertySource(name, loc,
-                                        PropertyResolvers.class.getClassLoader());
+          PropertyResolvers.class.getClassLoader());
     } catch (IOException e) {
       if (allowMissing) {
         return null;

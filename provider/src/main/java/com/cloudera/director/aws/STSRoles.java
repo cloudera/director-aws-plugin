@@ -33,7 +33,7 @@ import javax.annotation.Nonnull;
  * STS role configuration holder.
  */
 public class STSRoles {
-  public static final STSRoles DEFAULT = new STSRoles(Collections.<Config>emptyList());
+  public static final STSRoles DEFAULT = new STSRoles(Collections.emptyList());
 
   @VisibleForTesting
   static final String ROLE_ARN = "roleArn";
@@ -82,7 +82,7 @@ public class STSRoles {
    */
   public static String parseRoleName(String roleArn) {
     // Role ARN format:
-    // roleArn:partition:service:region:account-id:resourcetype/resource
+    // roleArn:partition:service:region:account-id:resourceType/resource
     // See, https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_identifiers.html#Identifiers_ARNs
     String[] roleArnComponents = roleArn.split(":");
     String[] resourceComponents;
@@ -99,11 +99,11 @@ public class STSRoles {
   /**
    * Generates timestamped session name.
    * <p>
-   * {@note For best tracking purpose on the owner side, it might be better
+   * <em>Note:</em> For best tracking purpose on the owner side, it might be better
    * not to call this method, but provide an entity which tries to assume
-   * role}.
+   * role.
    * <p>
-   * {@note The role session name uniquely identifies a session when the same
+   * <em>Note:</em> The role session name uniquely identifies a session when the same
    * role is assumed by different principals or for different reasons. In
    * cross-account scenarios, the role session name is visible to, and can be
    * logged by the account that owns the role. The role session name is also
@@ -117,7 +117,7 @@ public class STSRoles {
    * characters with no spaces. You can also include any of the following
    * characters: =,.@-
    * <p>
-   * Its minimum length is 2, and maximum length is 64. }
+   * Its minimum length is 2, and maximum length is 64.
    *
    * @param roleName role name
    */

@@ -61,7 +61,7 @@ public class VirtualizationMappings implements Function<String, List<String>> {
      * Virtualization mappings configuration properties.
      */
     // Fully qualifying class name due to compiler bug
-    public static enum VirtualizationMappingsConfigurationPropertyToken
+    public enum VirtualizationMappingsConfigurationPropertyToken
         implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
       /**
@@ -72,7 +72,7 @@ public class VirtualizationMappings implements Function<String, List<String>> {
           .configKey("customMappingsPath")
           .name("Custom mappings path")
           .defaultDescription("The path for the custom virtualization mappings file. Relative " +
-                              "paths are based on the plugin configuration directory.")
+              "paths are based on the plugin configuration directory.")
           .build());
 
       /**
@@ -85,7 +85,7 @@ public class VirtualizationMappings implements Function<String, List<String>> {
        *
        * @param configurationProperty the configuration property
        */
-      private VirtualizationMappingsConfigurationPropertyToken(
+      VirtualizationMappingsConfigurationPropertyToken(
           ConfigurationProperty configurationProperty) {
         this.configurationProperty = configurationProperty;
       }
@@ -131,8 +131,8 @@ public class VirtualizationMappings implements Function<String, List<String>> {
     File getCustomMappingsFile(String customMappingsPath) {
       File customMappingsPathFile = new File(customMappingsPath);
       return customMappingsPathFile.isAbsolute() ?
-             customMappingsPathFile :
-             new File(configurationDirectory, customMappingsPath);
+          customMappingsPathFile :
+          new File(configurationDirectory, customMappingsPath);
     }
 
     public void setCustomMappingsPath(String customMappingsPath) {
@@ -140,8 +140,8 @@ public class VirtualizationMappings implements Function<String, List<String>> {
         LOG.info("Overriding customMappingsPath=%s (default {})",
             customMappingsPath, DEFAULT_CUSTOM_MAPPINGS_PATH);
         checkArgument(getCustomMappingsFile(customMappingsPath).exists(),
-                      "Custom virtualization mappings path " +
-                      customMappingsPath + " does not exist");
+            "Custom virtualization mappings path " +
+                customMappingsPath + " does not exist");
         this.customMappingsPath = customMappingsPath;
       }
     }
@@ -184,14 +184,14 @@ public class VirtualizationMappings implements Function<String, List<String>> {
   /**
    * Creates virtualization mappings with the specified parameters.
    *
-   * @param configuration               the configuration
-   * @param configurationDirectory      the plugin configuration directory
-   * @param localizationContext         the localization context
+   * @param configuration          the configuration
+   * @param configurationDirectory the plugin configuration directory
+   * @param localizationContext    the localization context
    */
   public VirtualizationMappings(Configured configuration, File configurationDirectory,
-                                LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
     this(new VirtualizationMappingsConfigProperties(configuration, configurationDirectory,
-                                                    localizationContext));
+        localizationContext));
   }
 
   /**
@@ -210,7 +210,7 @@ public class VirtualizationMappings implements Function<String, List<String>> {
    * @param virtualizationMappingsResolver         the virtualization mappings resolver
    */
   private VirtualizationMappings(VirtualizationMappingsConfigProperties virtualizationMappingsConfigProperties,
-                                 PropertyResolver virtualizationMappingsResolver) {
+      PropertyResolver virtualizationMappingsResolver) {
     this.virtualizationMappingsConfigProperties = virtualizationMappingsConfigProperties;
     this.virtualizationMappingsResolver = virtualizationMappingsResolver;
   }
@@ -244,13 +244,7 @@ public class VirtualizationMappings implements Function<String, List<String>> {
   public static VirtualizationMappings getTestInstance(
       final Map<String, List<String>> instanceTypes, LocalizationContext localizationContext) {
     Map<String, String> propertyMap =
-        Maps.transformValues(instanceTypes,
-            new Function<List<String>, String>() {
-              @Override
-              public String apply(@Nonnull List<String> input) {
-                return JOINER.join(input);
-              }
-            });
+        Maps.transformValues(instanceTypes, JOINER::join);
     PropertyResolver virtualizationMappingsResolver =
         PropertyResolvers.newMapPropertyResolver(propertyMap);
     File tempDir = Files.createTempDir();

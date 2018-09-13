@@ -17,10 +17,13 @@ package com.cloudera.director.aws;
 import static com.google.common.base.Preconditions.checkNotNull;
 
 import com.amazonaws.ClientConfiguration;
+import com.amazonaws.retry.PredefinedRetryPolicies;
+import com.amazonaws.retry.RetryPolicy;
 import com.cloudera.director.spi.v2.common.http.HttpProxyParameters;
 import com.cloudera.director.spi.v2.model.ConfigurationProperty;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
+import com.cloudera.director.spi.v2.model.Property;
 import com.cloudera.director.spi.v2.model.util.ChildLocalizationContext;
 import com.cloudera.director.spi.v2.model.util.SimpleConfigurationPropertyBuilder;
 import com.google.common.annotations.VisibleForTesting;
@@ -51,13 +54,22 @@ public class AWSClientConfig {
       .withMaxErrorRetry(DEFAULT_MAX_ERROR_RETRIES)
       .withConnectionTimeout(DEFAULT_CONNECTION_TIMEOUT_MILLIS);
 
+  // Custom retry policy that will log when retry attempts by the AWS client
+  private static final boolean DEFAULT_LOG_RETRY_ATTEMPTS = false;
+  private static final boolean HONOR_MAX_ERROR_RETRY_IN_CLIENT_CONFIG = true;
+  private static final RetryPolicy RETRY_POLICY_WITH_LOGGING = new RetryPolicy(
+      PredefinedRetryPolicies.DEFAULT_RETRY_CONDITION,
+      new DefaultBackoffStrategyWithLogging(),
+      PredefinedRetryPolicies.DEFAULT_MAX_ERROR_RETRY,
+      HONOR_MAX_ERROR_RETRY_IN_CLIENT_CONFIG);
+
   /**
    * AWS client configuration properties.
    *
    * @see <a href="http://docs.aws.amazon.com/AWSJavaSDK/latest/javadoc/com/amazonaws/ClientConfiguration.html">ClientConfiguration</a>
    */
   // Fully qualifying class name due to compiler bug
-  public static enum AWSClientConfigurationPropertyToken
+  public enum AWSClientConfigurationPropertyToken
       implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
@@ -88,6 +100,21 @@ public class AWSClientConfig {
       protected void setFieldValue(AWSClientConfig clientConfig, String propertyValue) {
         clientConfig.setConnectionTimeoutInMilliseconds(Integer.parseInt(propertyValue));
       }
+    },
+
+    /**
+     * Whether to log internal AWS client retries.
+     */
+    LOG_RETRY_ATTEMPTS(new SimpleConfigurationPropertyBuilder()
+        .configKey("logRetryAttempts")
+        .name("Log client retries")
+        .type(Property.Type.BOOLEAN)
+        .defaultDescription("Whether to log AWS client retries.")
+        .build()) {
+      @Override
+      protected void setFieldValue(AWSClientConfig clientConfig, String propertyValue) {
+        clientConfig.setLogRetryAttempts(Boolean.parseBoolean(propertyValue));
+      }
     };
 
     /**
@@ -100,7 +127,7 @@ public class AWSClientConfig {
      *
      * @param configurationProperty the configuration property
      */
-    private AWSClientConfigurationPropertyToken(ConfigurationProperty configurationProperty) {
+    AWSClientConfigurationPropertyToken(ConfigurationProperty configurationProperty) {
       this.configurationProperty = configurationProperty;
     }
 
@@ -140,6 +167,7 @@ public class AWSClientConfig {
 
   private int maxErrorRetries = DEFAULT_MAX_ERROR_RETRIES;
   private int connectionTimeoutInMilliseconds = DEFAULT_CONNECTION_TIMEOUT_MILLIS;
+  private boolean logRetryAttempts = DEFAULT_LOG_RETRY_ATTEMPTS;
   private HttpProxyParameters httpProxyParameters;
 
   /**
@@ -192,13 +220,23 @@ public class AWSClientConfig {
     this.httpProxyParameters = checkNotNull(httpProxyParameters, "httpProxyParameters is null");
   }
 
+  public boolean isLogRetryAttempts() {
+    return logRetryAttempts;
+  }
+
+  public void setLogRetryAttempts(boolean logRetryAttempts) {
+    LOG.info("Overriding logRetryAttempts={} (default {})", logRetryAttempts,
+        DEFAULT_LOG_RETRY_ATTEMPTS);
+    this.logRetryAttempts = logRetryAttempts;
+  }
+
   /**
    * Returns an AWS ClientConfiguration representing the current proxy state.
    *
    * @return An AWS ClientConfiguration
    */
   public ClientConfiguration getClientConfiguration() {
-    return new ClientConfiguration()
+    ClientConfiguration clientConfig = new ClientConfiguration()
         .withMaxErrorRetry(getMaxErrorRetries())
         .withConnectionTimeout(getConnectionTimeoutInMilliseconds())
         .withProxyHost(httpProxyParameters.getHost())
@@ -209,6 +247,12 @@ public class AWSClientConfig {
         .withProxyWorkstation(httpProxyParameters.getWorkstation())
         .withPreemptiveBasicProxyAuth(httpProxyParameters.isPreemptiveBasicProxyAuth())
         .withNonProxyHosts(modifyProxyBypassList(httpProxyParameters.getProxyBypassHosts()));
+
+    if (isLogRetryAttempts()) {
+      clientConfig.withRetryPolicy(RETRY_POLICY_WITH_LOGGING);
+    }
+
+    return clientConfig;
   }
 
   /**

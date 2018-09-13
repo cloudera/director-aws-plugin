@@ -20,5 +20,5 @@ package com.cloudera.director.aws.network;
  */
 public enum AccessType {
   ALLOW,
-  DENY;
+  DENY
 }

@@ -52,7 +52,7 @@ public class RDSEndpoints implements Function<String, String> {
      * RDS endpoints configuration properties.
      */
     // Fully qualifying class name due to compiler bug
-    public static enum RDSEndpointsConfigurationPropertyToken
+    public enum RDSEndpointsConfigurationPropertyToken
         implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
       /**
@@ -63,7 +63,7 @@ public class RDSEndpoints implements Function<String, String> {
           .configKey("customEndpointsPath")
           .name("Custom endpoints path")
           .defaultDescription("The path for the custom RDS endpoints. Relative paths are based " +
-                              "on the plugin configuration directory.")
+              "on the plugin configuration directory.")
           .build());
 
       /**
@@ -76,7 +76,7 @@ public class RDSEndpoints implements Function<String, String> {
        *
        * @param configurationProperty the configuration property
        */
-      private RDSEndpointsConfigurationPropertyToken(
+      RDSEndpointsConfigurationPropertyToken(
           ConfigurationProperty configurationProperty) {
         this.configurationProperty = configurationProperty;
       }
@@ -109,7 +109,7 @@ public class RDSEndpoints implements Function<String, String> {
           cloudLocalizationContext, "rdsEndpoints");
       setCustomEndpointsPath(
           configuration.getConfigurationValue(RDSEndpointsConfigurationPropertyToken.CUSTOM_ENDPOINTS_PATH,
-                                              localizationContext));
+              localizationContext));
     }
 
     public String getCustomEndpointsPath() {
@@ -123,17 +123,17 @@ public class RDSEndpoints implements Function<String, String> {
     File getCustomEndpointsFile(String customEndpointsPath) {
       File customEndpointsPathFile = new File(customEndpointsPath);
       return customEndpointsPathFile.isAbsolute() ?
-             customEndpointsPathFile :
-             new File(configurationDirectory, customEndpointsPath);
+          customEndpointsPathFile :
+          new File(configurationDirectory, customEndpointsPath);
     }
 
     public void setCustomEndpointsPath(String customEndpointsPath) {
       if (customEndpointsPath != null) {
         LOG.info("Overriding customEndpointsPath={} (default {})",
-                               customEndpointsPath, DEFAULT_CUSTOM_ENDPOINTS_PATH);
+            customEndpointsPath, DEFAULT_CUSTOM_ENDPOINTS_PATH);
         checkArgument(getCustomEndpointsFile(customEndpointsPath).exists(),
-                      "Custom RDS endpoints path " +
-                      customEndpointsPath + " does not exist");
+            "Custom RDS endpoints path " +
+                customEndpointsPath + " does not exist");
         this.customEndpointsPath = customEndpointsPath;
       }
     }
@@ -174,14 +174,14 @@ public class RDSEndpoints implements Function<String, String> {
   /**
    * Creates RDS endpoints with the specified parameters.
    *
-   * @param configuration               the configuration
-   * @param configurationDirectory      the plugin configuration directory
-   * @param localizationContext         the localization context
+   * @param configuration          the configuration
+   * @param configurationDirectory the plugin configuration directory
+   * @param localizationContext    the localization context
    */
   public RDSEndpoints(Configured configuration, File configurationDirectory,
-                      LocalizationContext localizationContext) {
+      LocalizationContext localizationContext) {
     this(new RDSEndpointsConfigProperties(configuration, configurationDirectory,
-                                          localizationContext));
+        localizationContext));
   }
 
   /**
@@ -200,7 +200,7 @@ public class RDSEndpoints implements Function<String, String> {
    * @param rdsEndpointsResolver         the RDS endpoints resolver
    */
   private RDSEndpoints(RDSEndpointsConfigProperties rdsEndpointsConfigProperties,
-                       PropertyResolver rdsEndpointsResolver) {
+      PropertyResolver rdsEndpointsResolver) {
     this.rdsEndpointsConfigProperties = rdsEndpointsConfigProperties;
     this.rdsEndpointsResolver = rdsEndpointsResolver;
   }
@@ -213,7 +213,8 @@ public class RDSEndpoints implements Function<String, String> {
    * @param regionName region name
    * @return region endpoint if known
    */
-  @Nullable @Override
+  @Nullable
+  @Override
   public String apply(String regionName) {
     return rdsEndpointsResolver.getProperty(regionName);
   }

@@ -1,4 +1,16 @@
 // (c) Copyright 2016 Cloudera, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//   http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 package com.cloudera.director.aws;
 
@@ -13,6 +25,7 @@ import java.util.Map;
  * Timeouts for different blocking operations in the AWS plugin. Each timeout
  * has a string name and is stored as a unit-less long value.
  */
+@SuppressWarnings("Guava")
 public class AWSTimeouts {
 
   private final ImmutableMap<String, Long> timeouts;
@@ -30,12 +43,12 @@ public class AWSTimeouts {
     ImmutableMap.Builder<String, Long> b = ImmutableMap.builder();
 
     if (config != null) {
-      for (Map.Entry<String,ConfigValue> e : config.entrySet()) {
+      for (Map.Entry<String, ConfigValue> e : config.entrySet()) {
         String key = e.getKey();
         ConfigValue value = e.getValue();
         switch (value.valueType()) {
           case NUMBER:
-            long num =((Number) value.unwrapped()).longValue();
+            long num = ((Number) value.unwrapped()).longValue();
             if (num <= 0L) {
               throw new IllegalArgumentException("Timeout " + key + " is negative: " + value);
             }

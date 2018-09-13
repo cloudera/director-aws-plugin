@@ -51,7 +51,7 @@ public final class NetworkRule {
 
   /**
    * The port that this rule applies to.
-   *
+   * <p>
    * The valid port range is [0, 65535]. If it is -1, it means any port.
    */
   private final int port;
@@ -83,9 +83,8 @@ public final class NetworkRule {
    *
    * @param config the HOCON config
    * @param access the access type
-   * @return       an unmodifiable view of {@code Iterable} over the network rules described
-   *               by the given HOCON config.
-   *
+   * @return an unmodifiable view of {@code Iterable} over the network rules described
+   * by the given HOCON config.
    */
   public static Iterable<NetworkRule> fromConfig(Config config, AccessType access) {
     if (!config.hasPath(PROTOCOL_KEY)) {
@@ -145,12 +144,12 @@ public final class NetworkRule {
    * @param portRange            the range of ports
    * @param ipRangeList          the IP range list
    * @param accessType           the access type
-   * @return                     true if the network rule is enforced by the network permission
+   * @return true if the network rule is enforced by the network permission
    */
   public boolean isEnforced(String protocolNameOrNumber,
-                            Range<Integer> portRange,
-                            List<String> ipRangeList,
-                            AccessType accessType) {
+      Range<Integer> portRange,
+      List<String> ipRangeList,
+      AccessType accessType) {
     if (this.access != accessType) {
       return false;
     }
@@ -182,12 +181,12 @@ public final class NetworkRule {
    * @param portRange            the range of ports
    * @param ipRangeList          the IP range list
    * @param accessType           the access type
-   * @return                     true if the network rule is violated by the network permission
+   * @return true if the network rule is violated by the network permission
    */
   public boolean isViolated(String protocolNameOrNumber,
-                            Range<Integer> portRange,
-                            List<String> ipRangeList,
-                            AccessType accessType) {
+      Range<Integer> portRange,
+      List<String> ipRangeList,
+      AccessType accessType) {
     if (this.access == accessType) {
       return false;
     }

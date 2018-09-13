@@ -53,7 +53,7 @@ import org.springframework.core.env.PropertyResolver;
  * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/InstanceStorage.html">Amazon EC2 Instance Stor</a>
  * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html">Block Device Mapping</a>
  */
-@SuppressWarnings("PMD.TooManyStaticImports")
+@SuppressWarnings({"PMD.TooManyStaticImports", "Guava"})
 public class EphemeralDeviceMappings {
 
   private static final Logger LOG = LoggerFactory.getLogger(EphemeralDeviceMappings.class);
@@ -65,7 +65,7 @@ public class EphemeralDeviceMappings {
      */
     // Fully qualifying class name due to compiler bug
     @SuppressWarnings("PMD.UnnecessaryFullyQualifiedName")
-    public static enum EphemeralDeviceMappingsConfigurationPropertyToken
+    public enum EphemeralDeviceMappingsConfigurationPropertyToken
         implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
       /**
        * Path for the custom device mappings file. Relative paths are based on
@@ -75,7 +75,7 @@ public class EphemeralDeviceMappings {
           .configKey("customMappingsPath")
           .name("Custom mappings path")
           .defaultDescription("The path for the custom ephemeral device mappings file. Relative " +
-                              "paths are based on the plugin configuration directory.")
+              "paths are based on the plugin configuration directory.")
           .build());
 
       /**
@@ -88,7 +88,7 @@ public class EphemeralDeviceMappings {
        *
        * @param configurationProperty the configuration property
        */
-      private EphemeralDeviceMappingsConfigurationPropertyToken(
+      EphemeralDeviceMappingsConfigurationPropertyToken(
           ConfigurationProperty configurationProperty) {
         this.configurationProperty = configurationProperty;
       }
@@ -154,8 +154,8 @@ public class EphemeralDeviceMappings {
     File getCustomMappingsFile(String customMappingsPath) {
       File customMappingsPathFile = new File(customMappingsPath);
       return customMappingsPathFile.isAbsolute() ?
-             customMappingsPathFile :
-             new File(configurationDirectory, customMappingsPath);
+          customMappingsPathFile :
+          new File(configurationDirectory, customMappingsPath);
     }
 
     public void setCustomMappingsPath(String customMappingsPath) {
@@ -163,8 +163,8 @@ public class EphemeralDeviceMappings {
         LOG.info("Overriding customMappingsPath={} (default {})",
             customMappingsPath, DEFAULT_CUSTOM_MAPPINGS_PATH);
         checkArgument(getCustomMappingsFile(customMappingsPath).exists(),
-                      "Custom ephemeral device mappings path " +
-                      customMappingsPath + " does not exist");
+            "Custom ephemeral device mappings path " +
+                customMappingsPath + " does not exist");
         this.customMappingsPath = customMappingsPath;
       }
     }
@@ -214,7 +214,7 @@ public class EphemeralDeviceMappings {
   public EphemeralDeviceMappings(Configured configuration, File configurationDirectory,
       LocalizationContext launcherLocalizationContext) {
     this(new EphemeralDeviceMappingsConfigProperties(configuration, configurationDirectory,
-                                                     launcherLocalizationContext));
+        launcherLocalizationContext));
   }
 
   /**
@@ -248,18 +248,18 @@ public class EphemeralDeviceMappings {
    * Generates a list of block device mappings for all ephemeral drives for
    * the given instance type.
    *
-   * @param instanceType EC2 instance type
+   * @param instanceType       EC2 instance type
    * @param excludeDeviceNames set of device names that shouldn't be used for the block device mappings
    * @return list of block device mappings
    * @see <a href="http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/block-device-mapping-concepts.html">Block Device Mapping</a>
    */
-  List<BlockDeviceMapping> getBlockDeviceMappings(String instanceType, Set<String> excludeDeviceNames) {
+  public List<BlockDeviceMapping> getBlockDeviceMappings(String instanceType, Set<String> excludeDeviceNames) {
     checkNotNull(instanceType, "instanceType is null");
 
     Optional<Integer> optCount = getCount(instanceType);
     if (!optCount.isPresent()) {
       LOG.error("Unsupported instance type {}, add its ephemeral instance " +
-              "volume count as a custom mapping; assuming zero", instanceType);
+          "volume count as a custom mapping; assuming zero", instanceType);
       return Collections.emptyList();
     }
 
@@ -286,7 +286,7 @@ public class EphemeralDeviceMappings {
   }
 
   public List<BlockDeviceMapping> getBlockDeviceMappings(String instanceType) {
-    return getBlockDeviceMappings(instanceType, Collections.<String>emptySet());
+    return getBlockDeviceMappings(instanceType, Collections.emptySet());
   }
 
   private Optional<Integer> getCount(String instanceType) {

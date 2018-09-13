@@ -52,7 +52,7 @@ public final class NetworkRules {
    * A constant represents an empty set of network rules.
    */
   public static final NetworkRules EMPTY_RULES
-      = new NetworkRules(ImmutableTable.<Direction, AccessType, Iterable<NetworkRule>>of());
+      = new NetworkRules(ImmutableTable.of());
 
   /**
    * Internal constructor.
@@ -68,7 +68,7 @@ public final class NetworkRules {
    * Constructs a NetworkRules object using the given HOCON config.
    *
    * @param config a HOCON config
-   * @return       a NetworkRules object
+   * @return a NetworkRules object
    */
   public static NetworkRules fromConfig(Config config) {
     if (config == null) {
@@ -90,8 +90,8 @@ public final class NetworkRules {
   private static Table<Direction, AccessType, Iterable<NetworkRule>> parse(Config config) {
     Table<Direction, AccessType, Iterable<NetworkRule>> rules =
         ArrayTable.create(EnumSet.allOf(Direction.class), EnumSet.allOf(AccessType.class));
-    for (Direction direction: Direction.values()) {
-      for (AccessType access: AccessType.values()) {
+    for (Direction direction : Direction.values()) {
+      for (AccessType access : AccessType.values()) {
         populateRules(config, direction, access, rules);
       }
     }
@@ -107,7 +107,7 @@ public final class NetworkRules {
    * @param rules     the rules table
    */
   private static void populateRules(Config config, Direction direction, AccessType access,
-                                    Table<Direction, AccessType, Iterable<NetworkRule>> rules) {
+      Table<Direction, AccessType, Iterable<NetworkRule>> rules) {
     List<? extends Config> configList =
         config.getConfig(direction.toString().toLowerCase()).
             getConfigList(access.toString().toLowerCase());
@@ -138,12 +138,12 @@ public final class NetworkRules {
 
   /**
    * Retrieves rules based on the direction of network traffic.
-   *
+   * <p>
    * <p>The returned rules are just copies of actual network rules. Changes to the
    * returned collection will not update the underlying NetworkRules, and vice versa.
    *
    * @param direction the network direction
-   * @return          the associated list of network rules
+   * @return the associated list of network rules
    */
   public Iterable<NetworkRule> getRules(Direction direction) {
     if (this.rules.isEmpty()) {
@@ -158,17 +158,17 @@ public final class NetworkRules {
 
   /**
    * Retrieves rules based on the network direction and access type.
-   *
+   * <p>
    * <p>The returned rules are just copies of actual network rules. Changes to the
    * returned collection will not update the underlying NetworkRules, and vice versa.
    *
    * @param direction the network direction
    * @param access    the network rule access type
-   * @return          the associated list of network rules
+   * @return the associated list of network rules
    */
   public Iterable<NetworkRule> getRules(Direction direction, AccessType access) {
     return this.rules.isEmpty()
-        ? Collections.<NetworkRule>emptySet()
+        ? Collections.emptySet()
         : Sets.newHashSet(this.rules.get(direction, access));
   }
 }

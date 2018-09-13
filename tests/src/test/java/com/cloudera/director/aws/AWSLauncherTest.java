@@ -24,6 +24,7 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNotSame;
 import static org.junit.Assert.assertTrue;
 
+import com.cloudera.director.aws.provider.AWSProvider;
 import com.cloudera.director.spi.v2.model.ConfigurationProperty;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
 import com.cloudera.director.spi.v2.provider.CloudProvider;

@@ -37,6 +37,7 @@ import com.amazonaws.services.rds.model.DescribeDBEngineVersionsRequest;
 import com.amazonaws.services.rds.model.DescribeDBEngineVersionsResult;
 import com.amazonaws.services.rds.model.DescribeDBInstancesRequest;
 import com.amazonaws.services.rds.model.DescribeDBSubnetGroupsRequest;
+import com.cloudera.director.aws.rds.provider.RDSProvider;
 import com.cloudera.director.spi.v2.database.DatabaseType;
 import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v2.model.ConfigurationValidator;
@@ -113,7 +114,7 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
 
   static final String MASTER_USER_PASSWORD_TOO_SHORT =
       "The master user password has length %d, less than the minimum of " +
-      MINIMUM_MASTER_USER_PASSWORD_LENGTH;
+          MINIMUM_MASTER_USER_PASSWORD_LENGTH;
   static final String MASTER_USER_PASSWORD_MISSING =
       "The master user password is not specified";
 
@@ -130,14 +131,14 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
   /**
    * Creates an RDS instance template configuration validator with the specified parameters.
    *
-   * @param provider the RDS provider
+   * @param provider                  the RDS provider
    * @param encryptionInstanceClasses instance classes that support storage encryption
    */
   public RDSInstanceTemplateConfigurationValidator(RDSProvider provider,
-                                                   RDSEncryptionInstanceClasses encryptionInstanceClasses) {
+      RDSEncryptionInstanceClasses encryptionInstanceClasses) {
     this.provider = checkNotNull(provider, "provider is null");
     this.encryptionInstanceClasses = checkNotNull(encryptionInstanceClasses,
-                                                  "encryptionInstanceClasses is null");
+        "encryptionInstanceClasses is null");
   }
 
   @Override
@@ -244,12 +245,12 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
     if (password != null) {
       if (password.length() < MINIMUM_MASTER_USER_PASSWORD_LENGTH) {
         addError(accumulator, MASTER_USER_PASSWORD, localizationContext, null,
-                 MASTER_USER_PASSWORD_TOO_SHORT, password.length());
+            MASTER_USER_PASSWORD_TOO_SHORT, password.length());
       }
     } else {
       // This should not normally happen
       addError(accumulator, MASTER_USER_PASSWORD, localizationContext, null,
-               MASTER_USER_PASSWORD_MISSING);
+          MASTER_USER_PASSWORD_MISSING);
     }
   }
 
@@ -265,7 +266,7 @@ public class RDSInstanceTemplateConfigurationValidator implements ConfigurationV
       PluginExceptionConditionAccumulator accumulator,
       LocalizationContext localizationContext) {
 
-    // The preceeding validator has already been run, so we know this value is present.
+    // The preceding validator has already been run, so we know this value is present.
     String type = configuration.getConfigurationValue(TYPE, localizationContext);
 
     DatabaseType databaseType;

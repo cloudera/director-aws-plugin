@@ -18,7 +18,7 @@ import com.google.common.base.Preconditions;
 
 /**
  * The network protocols that are supported by {@code NetworkRule}.
- *
+ * <p>
  * <p>
  * Each element contains an IP protocol name (<code>tcp</code>, <code>udp</code>)
  * and the associated protocol number (see <a
@@ -54,7 +54,7 @@ public enum Protocol {
    * Converts to a protocol enum element based on either protocol name or protocol number.
    *
    * @param nameOrNumber a protocol name or protocol number
-   * @return             a protocol enum element
+   * @return a protocol enum element
    */
   public static Protocol toProtocol(String nameOrNumber) {
     Preconditions.checkNotNull(nameOrNumber);

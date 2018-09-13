@@ -23,38 +23,55 @@
     <parent>
         <groupId>com.cloudera.director</groupId>
         <artifactId>aws</artifactId>
-        <version>1.5.0</version>
+        <version>2.0.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
     <groupId>com.cloudera.director</groupId>
     <artifactId>aws-provider</artifactId>
-    <name>Cloudera Director :: Plugins :: AWS :: Provider</name>
+    <name>Cloudera Altus Director :: Plugins :: AWS :: Provider</name>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
 
         <launcher-class>com.cloudera.director.aws.AWSLauncher</launcher-class>
+
+        <java.version>1.8</java.version>
+
+        <aspectj.version>1.8.1</aspectj.version>
         <assertj.version>1.6.0</assertj.version>
-        <aws-java-sdk.version>1.11.125</aws-java-sdk.version>
-        <director-spi-v2.version>1.0.1</director-spi-v2.version>
-        <guava.version>19.0</guava.version>
+        <aws-java-sdk.version>1.11.342</aws-java-sdk.version>
+        <commons-lang3.version>3.5</commons-lang3.version>
+        <director-spi-v2.version>2.0.0</director-spi-v2.version>
+        <guava.version>20.0</guava.version>
+        <jackson.version>2.9.5</jackson.version>
         <junit.version>4.12</junit.version>
         <jsr305.version>2.0.2</jsr305.version>
         <mockito.version>2.10.0</mockito.version>
-        <slf4j.version>1.7.5</slf4j.version>
-        <spring.version>4.1.5.RELEASE</spring.version>
-        <typesafe-config.version>1.2.0</typesafe-config.version>
-        <shade-prefix>com.cloudera.director.aws.shaded</shade-prefix>
-        <maven-checkstyle-plugin.version>2.13</maven-checkstyle-plugin.version>
-        <maven-pmd-plugin.version>3.7</maven-pmd-plugin.version>
-        <findbugs-maven-plugin.version>3.0.3</findbugs-maven-plugin.version>
-        <java.version>1.7</java.version>
-        <aspectj.version>1.8.1</aspectj.version>
-        <aspectj-maven-plugin.version>1.8</aspectj-maven-plugin.version>
         <retryer.version>2.0.0</retryer.version>
+        <slf4j.version>1.7.5</slf4j.version>
+        <spring.version>5.0.7.RELEASE</spring.version>
+        <typesafe-config.version>1.2.0</typesafe-config.version>
+
+        <shade-prefix>com.cloudera.director.aws.shaded</shade-prefix>
+
+        <maven-checkstyle-plugin.version>2.17</maven-checkstyle-plugin.version>
+        <maven-pmd-plugin.version>3.7</maven-pmd-plugin.version>
+        <maven-shade-plugin.version>3.1.0</maven-shade-plugin.version>
+        <spotbugs-maven-plugin.version>3.1.3.1</spotbugs-maven-plugin.version>
+        <aspectj-maven-plugin.version>1.8</aspectj-maven-plugin.version>
     </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency> <!-- override version of aws sdk dependency on jackson -->
+                <groupId>com.fasterxml.jackson.dataformat</groupId>
+                <artifactId>jackson-dataformat-cbor</artifactId>
+                <version>${jackson.version}</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <dependencies>
         <dependency>
@@ -77,12 +94,6 @@
         </dependency>
 
         <dependency>
-            <groupId>org.springframework</groupId>
-            <artifactId>spring-core</artifactId>
-            <version>${spring.version}</version>
-        </dependency>
-
-        <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-core</artifactId>
             <version>${aws-java-sdk.version}</version>
@@ -91,6 +102,12 @@
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-java-sdk-ec2</artifactId>
+            <version>${aws-java-sdk.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-java-sdk-autoscaling</artifactId>
             <version>${aws-java-sdk.version}</version>
         </dependency>
 
@@ -118,6 +135,30 @@
             <version>${aws-java-sdk.version}</version>
         </dependency>
 
+        <dependency> <!-- override version of aws sdk dependency on jackson -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-core</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency> <!-- override version of aws sdk dependency on jackson -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency> <!-- override version of aws sdk dependency on jackson -->
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.rholder</groupId>
+            <artifactId>guava-retrying</artifactId>
+            <version>${retryer.version}</version>
+        </dependency>
+
         <dependency>
             <groupId>com.typesafe</groupId>
             <artifactId>config</artifactId>
@@ -125,10 +166,9 @@
         </dependency>
 
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>${slf4j.version}</version>
-            <scope>provided</scope>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>${commons-lang3.version}</version>
         </dependency>
 
         <dependency>
@@ -145,9 +185,16 @@
         </dependency>
 
         <dependency>
-            <groupId>com.github.rholder</groupId>
-            <artifactId>guava-retrying</artifactId>
-            <version>${retryer.version}</version>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>${slf4j.version}</version>
+            <scope>provided</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-core</artifactId>
+            <version>${spring.version}</version>
         </dependency>
 
         <!-- test dependencies -->
@@ -196,8 +243,18 @@
 
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>2.4</version>
+                <configuration>
+                    <!-- see https://issues.apache.org/jira/browse/MSHADE-126 -->
+                    <forceCreation>true</forceCreation>
+                </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>
-                <version>2.3</version>
+                <version>${maven-shade-plugin.version}</version>
                 <configuration>
                     <artifactSet>
                         <excludes>
@@ -241,6 +298,10 @@
                         <relocation><!-- guava -->
                             <pattern>com.google.common</pattern>
                             <shadedPattern>${shade-prefix}.com.google.common</shadedPattern>
+                        </relocation>
+                        <relocation><!-- commons-lang3 -->
+                            <pattern>org.apache.commons.lang3</pattern>
+                            <shadedPattern>${shade-prefix}.org.apache.commons.lang3</shadedPattern>
                         </relocation>
                         <relocation><!-- google thirdparty -->
                             <pattern>com.google.thirdparty</pattern>
@@ -357,9 +418,9 @@
             </plugin>
 
             <plugin>
-                <groupId>org.codehaus.mojo</groupId>
-                <artifactId>findbugs-maven-plugin</artifactId>
-                <version>${findbugs-maven-plugin.version}</version>
+                <groupId>com.github.spotbugs</groupId>
+                <artifactId>spotbugs-maven-plugin</artifactId>
+                <version>${spotbugs-maven-plugin.version}</version>
                 <configuration>
                     <excludeFilterFile>findbugs-exclude.xml</excludeFilterFile>
                     <failOnError>false</failOnError>

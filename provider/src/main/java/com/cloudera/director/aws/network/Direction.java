@@ -19,5 +19,5 @@ package com.cloudera.director.aws.network;
  */
 public enum Direction {
   INBOUND,
-  OUTBOUND;
+  OUTBOUND
 }
