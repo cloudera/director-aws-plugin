@@ -65,7 +65,7 @@ public class VirtualizationMappingsTest {
   // When new HVM instance types are added to virtualizationmappings.properties,
   // update this constant.
 
-  private static final int NUM_HVM_INSTANCE_TYPES = 87;
+  private static final int NUM_HVM_INSTANCE_TYPES = 111;
 
   @Test
   public void testWithNonOverrideBuiltIn() {
