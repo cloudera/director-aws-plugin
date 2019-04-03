@@ -19,6 +19,7 @@ import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.Tags;
 import com.cloudera.director.aws.clientprovider.AWSKMSClientProvider;
+import com.cloudera.director.aws.clientprovider.AWSSTSClientProvider;
 import com.cloudera.director.aws.clientprovider.AmazonAutoScalingClientProvider;
 import com.cloudera.director.aws.clientprovider.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.clientprovider.AmazonIdentityManagementClientProvider;
@@ -225,6 +226,7 @@ public class EC2ProviderCommon {
         new AmazonAutoScalingClientProvider(credentialsProvider, clientConfiguration),
         new AmazonIdentityManagementClientProvider(credentialsProvider, clientConfiguration),
         new AWSKMSClientProvider(credentialsProvider, clientConfiguration),
+        new AWSSTSClientProvider(credentialsProvider, clientConfiguration),
         true,
         DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
   }

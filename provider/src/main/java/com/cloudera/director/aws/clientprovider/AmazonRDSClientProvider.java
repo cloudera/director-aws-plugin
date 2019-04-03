@@ -23,6 +23,7 @@ import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.rds.AmazonRDSClient;
 import com.amazonaws.services.rds.model.AmazonRDSException;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.ec2.EC2ProviderConfigurationPropertyToken;
 import com.cloudera.director.aws.rds.RDSEndpoints;
@@ -104,7 +105,9 @@ public class AmazonRDSClientProvider extends AbstractConfiguredOnceClientProvide
         // not authorized for RDS - add a warning
         accumulator.addWarning(RDS_AUTHORIZATION_KEY, e.getMessage());
       } else {
-        throw AWSExceptions.propagate(e);
+        AWSSecurityTokenServiceAsyncClient stsClient = new AWSSTSClientProvider(awsCredentialsProvider,
+            clientConfiguration) .doConfigure(configuration, accumulator, providerLocalizationContext, verify);
+        throw AWSExceptions.propagate(stsClient, e);
       }
 
     } catch (IllegalArgumentException e) {

@@ -37,6 +37,7 @@ import com.amazonaws.services.ec2.model.RunInstancesResult;
 import com.amazonaws.services.ec2.model.StateReason;
 import com.amazonaws.services.ec2.model.Tag;
 import com.amazonaws.services.ec2.model.TagSpecification;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.ec2.EC2Instance;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
@@ -89,9 +90,9 @@ public class OnDemandAllocator extends AbstractInstanceAllocator {
   private final boolean useTagOnCreate;
 
   public OnDemandAllocator(AllocationHelper allocationHelper,
-      AmazonEC2AsyncClient client, boolean tagEbsVolumes, boolean useTagOnCreate,
-      EC2InstanceTemplate template, Collection<String> virtualInstanceIds, int minCount) {
-    super(allocationHelper, client, tagEbsVolumes, template, virtualInstanceIds, minCount);
+      AmazonEC2AsyncClient ec2Client, AWSSecurityTokenServiceAsyncClient stsClient ,boolean tagEbsVolumes,
+      boolean useTagOnCreate, EC2InstanceTemplate template, Collection<String> virtualInstanceIds, int minCount) {
+    super(allocationHelper, ec2Client, stsClient, tagEbsVolumes, template, virtualInstanceIds, minCount);
     this.useTagOnCreate = useTagOnCreate;
   }
 
@@ -158,7 +159,7 @@ public class OnDemandAllocator extends AbstractInstanceAllocator {
       if (useTagOnCreate) {
         Map<String, Future<RunInstancesResult>> runInstanceRequests = Maps.newHashMap();
         for (String virtualInstanceId : unallocatedInstanceIds) {
-          runInstanceRequests.put(virtualInstanceId, client.runInstancesAsync(
+          runInstanceRequests.put(virtualInstanceId, ec2Client.runInstancesAsync(
               newRunInstancesRequest(template, virtualInstanceId, userDefinedTags)));
         }
 
@@ -204,10 +205,10 @@ public class OnDemandAllocator extends AbstractInstanceAllocator {
         int normalizedMinCount = Math.max(1, minCount - virtualInstanceIdToInstances.size());
         try {
           // Only allocated what we haven't allocated yet
-          runInstancesResult = client.runInstances(
+          runInstancesResult = ec2Client.runInstances(
               newRunInstanceRequestBulkNoTagOnCreate(template, virtualInstanceIds, normalizedMinCount));
         } catch (AmazonServiceException e) {
-          AWSExceptions.propagateIfUnrecoverable(e);
+          AWSExceptions.propagateIfUnrecoverable(stsClient, e);
 
           // As documented at http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instance-capacity.html
 
@@ -215,7 +216,7 @@ public class OnDemandAllocator extends AbstractInstanceAllocator {
               INSTANCE_LIMIT_EXCEEDED.equals(e.getErrorCode())) {
             LOG.warn("Hit instance capacity issues. Attempting to proceed anyway.", e);
           } else {
-            throw AWSExceptions.propagate(e);
+            throw AWSExceptions.propagate(stsClient, e);
           }
         }
 
@@ -304,7 +305,7 @@ public class OnDemandAllocator extends AbstractInstanceAllocator {
 
       Set<StateReason> failedStateReasons = getStateReasons(unsuccessfulInstances.values());
 
-      AWSExceptions.propagate("Problem allocating on-demand instances",
+      AWSExceptions.propagate(stsClient, "Problem allocating on-demand instances",
           encounteredExceptions, failedStateReasons, template);
 
       return Collections.emptySet();
@@ -450,7 +451,7 @@ public class OnDemandAllocator extends AbstractInstanceAllocator {
 
     DescribeInstancesRequest request = new DescribeInstancesRequest()
         .withInstanceIds(ec2InstanceIds);
-    DescribeInstancesResult result = client.describeInstances(request);
+    DescribeInstancesResult result = ec2Client.describeInstances(request);
 
     List<Reservation> reservations = result.getReservations();
 

@@ -33,6 +33,7 @@ import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
 import com.cloudera.director.aws.ec2.EC2TagHelper;
 import com.cloudera.director.aws.ec2.allocation.AllocationHelper;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.shaded.org.joda.time.DateTime;
 import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v2.model.util.SimpleConfiguration;
@@ -61,6 +62,7 @@ public class SpotGroupAllocatorTest {
 
   private AllocationHelper allocationHelper;
   private AmazonEC2AsyncClient ec2Client;
+  private AWSSecurityTokenServiceAsyncClient stsClient;
 
   @Before
   public void setUp() {
@@ -72,6 +74,7 @@ public class SpotGroupAllocatorTest {
     when(allocationHelper.getEC2TagHelper()).thenReturn(ec2TagHelper);
 
     ec2Client = mock(AmazonEC2AsyncClient.class);
+    stsClient = mock(AWSSecurityTokenServiceAsyncClient.class);
   }
 
   @Test(timeout=5000L)
@@ -137,7 +140,7 @@ public class SpotGroupAllocatorTest {
 
   private SpotGroupAllocator createSpotGroupAllocator(
       Collection<String> virtualInstanceIds) {
-    return new SpotGroupAllocator(allocationHelper, ec2Client, false,
+    return new SpotGroupAllocator(allocationHelper, ec2Client, stsClient, false,
         createEC2InstanceTemplate(), virtualInstanceIds, 0);
   }
 

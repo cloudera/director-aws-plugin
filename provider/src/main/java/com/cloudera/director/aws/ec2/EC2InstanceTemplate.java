@@ -104,6 +104,22 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
       implements com.cloudera.director.spi.v2.model.ConfigurationPropertyToken {
 
     /**
+     * Whether instances created from this template are part of an EC2 Auto Scaling group (ASG).
+     *
+     * @see <a href="http://docs.aws.amazon.com/autoscaling/ec2/userguide/AutoScalingGroup.html">Auto Scaling Groups</a>
+     */
+    USE_ASG(new SimpleConfigurationPropertyBuilder()
+        .configKey(ComputeInstanceTemplateConfigurationPropertyToken.AUTOMATIC.unwrap().getConfigKey())
+        .name("Use Auto Scaling Group (ASG)")
+        .required(false)
+        .widget(ConfigurationProperty.Widget.CHECKBOX)
+        .defaultDescription(
+            "Whether to use EC2 Auto Scaling groups.<br />" +
+                "<a target='_blank' href='http://docs.aws.amazon.com/autoscaling/ec2/userguide/AutoScalingGroup.html'>More Information</a>"
+        )
+        .build()),
+
+    /**
      * Whether to allow AWS Auto Scaling to automatically perform certain operations on Auto Scaling
      * instances, such as replacing those that fail health checks or rebalancing availability zones.
      *
@@ -632,6 +648,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "The user data, base64 encoded.<br />" +
                 "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html'>More Information</a>"
         )
+        .sensitive(true)
         .build()),
 
     /**
@@ -648,6 +665,7 @@ public class EC2InstanceTemplate extends ComputeInstanceTemplate {
             "The user data, unencoded.<br />" +
                 "<a target='_blank' href='http://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-metadata.html'>More Information</a>"
         )
+        .sensitive(true)
         .build());
 
     /**

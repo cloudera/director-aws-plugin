@@ -38,6 +38,7 @@ import com.amazonaws.services.ec2.model.SpotPlacement;
 import com.amazonaws.services.ec2.model.Tag;
 import com.amazonaws.services.ec2.model.TerminateInstancesRequest;
 import com.amazonaws.services.ec2.model.TerminateInstancesResult;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.ec2.EC2Instance;
@@ -135,7 +136,8 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
    * Creates a Spot group allocator with the specified parameters.
    *
    * @param allocationHelper   the allocation helper
-   * @param client             the EC2 client
+   * @param ec2Client          the EC2 client
+   * @param stsClient          the STS client
    * @param template           the instance template
    * @param virtualInstanceIds the virtual instance IDs for the created instances
    * @param minCount           the minimum number of instances to allocate if not all resources can be
@@ -143,12 +145,13 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
    */
   @VisibleForTesting
   public SpotGroupAllocator(AllocationHelper allocationHelper,
-      AmazonEC2AsyncClient client,
+      AmazonEC2AsyncClient ec2Client,
+      AWSSecurityTokenServiceAsyncClient stsClient,
       boolean tagEbsVolumes,
       EC2InstanceTemplate template,
       Collection<String> virtualInstanceIds,
       int minCount) {
-    super(allocationHelper, client, tagEbsVolumes, template, virtualInstanceIds, minCount);
+    super(allocationHelper, ec2Client, stsClient, tagEbsVolumes, template, virtualInstanceIds, minCount);
 
     AWSTimeouts awsTimeouts = allocationHelper.getAWSTimeouts();
 
@@ -302,7 +305,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
     } catch (AmazonClientException e) {
       // Log here so we get a full stack trace.
       LOG.error("Problem allocating Spot instances", e);
-      throw AWSExceptions.propagate(e);
+      throw AWSExceptions.propagate(stsClient, e);
     } catch (InterruptedException e) {
       throw e;
     } catch (Exception e) {
@@ -367,7 +370,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
                 .withName("tag:" + idTagName)
                 .withValues(virtualInstanceIds));
     DescribeSpotInstanceRequestsResult describeSpotInstanceRequestsResult =
-        client.describeSpotInstanceRequests(describeSpotInstanceRequestsRequest);
+        ec2Client.describeSpotInstanceRequests(describeSpotInstanceRequestsRequest);
     for (SpotInstanceRequest existingSpotInstanceRequest :
         describeSpotInstanceRequestsResult.getSpotInstanceRequests()) {
       String spotInstanceRequestId = existingSpotInstanceRequest.getSpotInstanceRequestId();
@@ -518,7 +521,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
 
     Map<String, Future<RequestSpotInstancesResult>> spotResults = Maps.toMap(
         virtualInstanceIds,
-        virtualInstanceId -> client.requestSpotInstancesAsync(newRequestSpotInstanceRequest(virtualInstanceId)));
+        virtualInstanceId -> ec2Client.requestSpotInstancesAsync(newRequestSpotInstanceRequest(virtualInstanceId)));
 
     Map<String, String> virtualInstanceIdToRequestIds = Maps.newHashMapWithExpectedSize(virtualInstanceIds.size());
     for (Map.Entry<String, Future<RequestSpotInstancesResult>> spotResult : spotResults.entrySet()) {
@@ -531,7 +534,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
       } catch (ExecutionException e) {
         if (e.getCause() instanceof AmazonServiceException) {
           AmazonServiceException awsException = (AmazonServiceException) e.getCause();
-          AWSExceptions.propagateIfUnrecoverable(awsException);
+          AWSExceptions.propagateIfUnrecoverable(stsClient, awsException);
 
           String message = "Exception while trying to allocate instance.";
 
@@ -607,7 +610,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
     try {
       retryUntil(
           (Callable<Void>) () -> {
-            client.createTags(new CreateTagsRequest().withTags(tags).withResources(spotInstanceRequestId));
+            ec2Client.createTags(new CreateTagsRequest().withTags(tags).withResources(spotInstanceRequestId));
             return null;
           },
           new DateTime(requestExpirationTime));
@@ -615,7 +618,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
       LOG.warn("timeout waiting for spot instance request {} tagged", spotInstanceRequestId);
     } catch (ExecutionException e) {
       if (AmazonServiceException.class.isInstance(e.getCause())) {
-        throw AWSExceptions.propagate((AmazonServiceException) e.getCause());
+        throw AWSExceptions.propagate(stsClient, (AmazonServiceException) e.getCause());
       }
       throw new UnrecoverableProviderException(e.getCause());
     }
@@ -641,7 +644,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
 
       // Retrieve all of the requests we want to monitor.
       DescribeSpotInstanceRequestsResult describeResult =
-          client.describeSpotInstanceRequests(describeRequest);
+          ec2Client.describeSpotInstanceRequests(describeRequest);
       List<SpotInstanceRequest> describeResponses = describeResult.getSpotInstanceRequests();
 
       for (SpotInstanceRequest describeResponse : describeResponses) {
@@ -831,11 +834,11 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
       LOG.info(">> Terminating Spot instances {}", ec2InstanceIds);
       TerminateInstancesResult terminateResult;
       try {
-        terminateResult = client.terminateInstances(
+        terminateResult = ec2Client.terminateInstances(
             new TerminateInstancesRequest().withInstanceIds(ec2InstanceIds));
         LOG.info("<< Result {}", terminateResult);
       } catch (AmazonClientException e) {
-        throw AWSExceptions.propagate(e);
+        throw AWSExceptions.propagate(stsClient, e);
       } catch (Exception e) {
         accumulator.addError(null, "Problem terminating Spot instances: "
             + getErrorMessage(e));
@@ -870,7 +873,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
               () -> {
                 CancelSpotInstanceRequestsRequest request = new CancelSpotInstanceRequestsRequest()
                     .withSpotInstanceRequestIds(spotInstanceRequestIds);
-                return client.cancelSpotInstanceRequests(request);
+                return ec2Client.cancelSpotInstanceRequests(request);
               },
               new DateTime(requestExpirationTime));
         } catch (RetryException e) {
@@ -881,7 +884,7 @@ public class SpotGroupAllocator extends AbstractInstanceAllocator {
 
         waitForSpotInstances(spotInstanceRequestIds, true);
       } catch (AmazonClientException e) {
-        throw AWSExceptions.propagate(e);
+        throw AWSExceptions.propagate(stsClient, e);
       } catch (InterruptedException e) {
         throw e;
       } catch (Exception e) {

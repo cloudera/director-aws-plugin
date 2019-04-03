@@ -87,8 +87,13 @@ prepare_disk()
       mkdir "${mount}"
     fi
 
-    mount -o defaults,noatime "${device}" "${mount}"
-    echo "$device $mount $FS defaults,noatime 0 0" >> /etc/fstab
+    # gather the UUID for the specific device
+    blockid=$(/sbin/blkid|grep ${device}|awk '{print $2}'|awk -F\= '{print $2}'|sed -e"s/\"//g")
+
+    # Set up the blkid for device entry in /etc/fstab
+    echo "UUID=${blockid} $mount $FS defaults,noatime 0 0" >> /etc/fstab
+    mount ${mount}
+
   fi
 }
 

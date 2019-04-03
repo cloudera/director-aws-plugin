@@ -40,6 +40,7 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.AUTOMATIC;
 import static com.cloudera.director.spi.v2.model.util.Validations.addError;
+import static com.cloudera.director.spi.v2.model.util.Validations.addWarning;
 
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.AmazonEC2Client;
@@ -55,6 +56,7 @@ import com.amazonaws.services.ec2.model.DescribeSecurityGroupsRequest;
 import com.amazonaws.services.ec2.model.DescribeSecurityGroupsResult;
 import com.amazonaws.services.ec2.model.DescribeSubnetsRequest;
 import com.amazonaws.services.ec2.model.DescribeSubnetsResult;
+import com.amazonaws.services.ec2.model.Filter;
 import com.amazonaws.services.ec2.model.Image;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
@@ -83,10 +85,12 @@ import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.apache.commons.lang3.StringUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -104,6 +108,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   static final int MIN_ROOT_VOLUME_SIZE_GB = 10;
   private static final String SIXTY_FOUR_BIT_ARCHITECTURE = "x86_64";
   private static final String AVAILABLE_STATE = "available";
+  private static final String MARKETPLACE_OWNER_ID = "679593333241";
 
   @VisibleForTesting
   static final String HVM_VIRTUALIZATION = "hvm";
@@ -120,11 +125,20 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   @VisibleForTesting
   static final Set<String> TENANCY_TYPES = ImmutableSet.of("default", "dedicated");
 
+  // TODO: at the moment, we cannot add this to spi (or can we?), that we need to make sure that string
+  // content used here is the same as where it is defined (PluggableComputeClusterTemplateValidator).
+  @VisibleForTesting
+  static final String WHITELISTED_PRODUCT_CODES = "_whitelisted_product_codes";
+
   @VisibleForTesting
   static final String INVALID_AMI_NAME_MSG = "AMI ID does not start with ami-: %s";
   private static final String INVALID_AMI_ID = "InvalidAMIID";
   @VisibleForTesting
   static final String INVALID_AMI_MSG = "Invalid AMI: %s";
+  @VisibleForTesting
+  static final String INVALID_AMI_OWNER_ID_MSG = "Invalid AMI, owner ID is not %s: %s";
+  @VisibleForTesting
+  static final String INVALID_AMI_PRODUCT_CODE_MSG = "Invalid AMI, product code is not in %s: %s";
   @VisibleForTesting
   static final String INVALID_AMI_ARCHITECTURE_MSG =
       "Only 64-bit architecture is supported. Invalid architecture for AMI %s: %s";
@@ -161,6 +175,9 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   @VisibleForTesting
   static final String INVALID_AMI_ROOT_DEVICE_TYPE_MSG = "Only EBS root device type is supported." +
       " Invalid root device type for AMI %s: %s";
+  @VisibleForTesting
+  // Same as the one in ConfigurationPropertiesUtil. Keep both in sync
+  static final String AMI_NAME_NOT_ID = "Image name [%s] passed, instead of image id [%s]";
 
   private static final String INVALID_PARAMETER_VALUE = "InvalidParameterValue";
 
@@ -349,10 +366,17 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
 
     String imageName = configuration.getConfigurationValue(IMAGE, localizationContext);
     String type = configuration.getConfigurationValue(TYPE, localizationContext);
+    Set<String> whitelistedProductCodes = ImmutableSet.copyOf(
+        StringUtils.split(
+            configuration
+                .getConfiguration(localizationContext)
+                .getOrDefault(WHITELISTED_PRODUCT_CODES, StringUtils.EMPTY)));
 
     int conditionCount = accumulator.getConditionsByKey().size();
 
-    if (!imageName.startsWith("ami-")) {
+    // The image name must be an ID unless there are product codes to check,
+    // which indicates that the image may be a name to look up.
+    if (whitelistedProductCodes.isEmpty() && !isImageId(imageName)) {
       addError(accumulator, IMAGE, localizationContext,
           null, INVALID_AMI_NAME_MSG, imageName);
       return;
@@ -361,24 +385,72 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     LOG.info(">> Describing AMI '{}'", imageName);
     DescribeImagesResult result = null;
     try {
-      result = client.describeImages(
-          new DescribeImagesRequest().withImageIds(imageName));
-      checkCount(accumulator, IMAGE, localizationContext, imageName,
-          result.getImages());
+      DescribeImagesRequest request = isImageId(imageName)
+          ? new DescribeImagesRequest().withImageIds(imageName)
+          : new DescribeImagesRequest().withFilters(
+              new Filter().withName("name").withValues(imageName + "*"),
+              new Filter().withName("product-code").withValues(whitelistedProductCodes),
+              new Filter().withName("owner-id").withValues(MARKETPLACE_OWNER_ID));
+
+      result = client.describeImages(request);
+      checkAtLeastOneElement(accumulator, IMAGE, localizationContext, imageName, result.getImages(),
+                             isImageId(imageName));
     } catch (AmazonServiceException e) {
       if (e.getErrorCode().startsWith(INVALID_AMI_ID)) {
-        addError(accumulator, IMAGE, localizationContext,
-            null, INVALID_AMI_MSG, imageName);
+        addError(accumulator, IMAGE, localizationContext, null, INVALID_AMI_MSG, imageName);
       } else {
         throw Throwables.propagate(e);
       }
     }
 
+    // If any more errors have been accumulated, stop validating now.
     if ((result == null) || (accumulator.getConditionsByKey().size() > conditionCount)) {
       return;
     }
 
-    Image image = Iterables.getOnlyElement(result.getImages());
+    // Get the most recent image from the search results.
+    Image image = result
+        .getImages()
+        .stream()
+        .reduce((lhs, rhs) ->
+            !Instant.parse(lhs.getCreationDate()).isBefore(Instant.parse(rhs.getCreationDate())) ? lhs : rhs)
+        .get();
+    LOG.debug("Selected image: {}", image);
+
+    // If the image was not searched for by name / product code / owner ID (that
+    // is, an image ID was provided), but there are product codes to verify, the
+    // check that the image has an acceptable product code and owner ID. (There
+    // is no name to check at this point, but having an acceptable product code
+    // is sufficient.)
+    if (isImageId(imageName) && !whitelistedProductCodes.isEmpty()) {
+      boolean validAmiId = true;
+      if (!image.getOwnerId().equals(MARKETPLACE_OWNER_ID)) {
+        addError(accumulator, IMAGE, localizationContext, null, INVALID_AMI_OWNER_ID_MSG, MARKETPLACE_OWNER_ID,
+                 imageName);
+        validAmiId = false;
+      }
+      if (!image.getProductCodes().stream().map(pc -> pc.getProductCodeId())
+          .anyMatch(pc -> whitelistedProductCodes.contains(pc))) {
+        addError(accumulator, IMAGE, localizationContext, null, INVALID_AMI_PRODUCT_CODE_MSG, whitelistedProductCodes,
+                 imageName);
+        validAmiId = false;
+      }
+      // Don't continue validation if the image is no good.
+      if (!validAmiId) {
+        return;
+      }
+    }
+
+    // Add a warning if the image was specified by name. This is a mechanism
+    // for calling code to swap in the image ID for the name later on. It's
+    // also a legitimate warning, since the image that is resolved by searching
+    // by name changes over time as new images are published.
+    if (!isImageId(imageName)) {
+      LOG.info("Resolved imageName {} to {}", imageName, image.getImageId());
+      addWarning(accumulator, IMAGE, localizationContext,
+          null, AMI_NAME_NOT_ID, imageName, image.getImageId());
+    }
+
     if (!SIXTY_FOUR_BIT_ARCHITECTURE.equals(image.getArchitecture())) {
       addError(accumulator, IMAGE, localizationContext,
           null, INVALID_AMI_ARCHITECTURE_MSG, imageName, image.getArchitecture());
@@ -443,6 +515,10 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     }
   }
 
+  private static boolean isImageId(String imageName) {
+    return imageName.startsWith("ami-");
+  }
+
   /**
    * Validates the configured availability zone.
    *
@@ -465,7 +541,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         DescribeAvailabilityZonesResult result = client.describeAvailabilityZones(
             new DescribeAvailabilityZonesRequest().withZoneNames(zoneName));
 
-        checkCount(accumulator, AVAILABILITY_ZONE, localizationContext, "Availability zone",
+        checkSingleElement(accumulator, AVAILABILITY_ZONE, localizationContext, "Availability zone",
             result.getAvailabilityZones());
       } catch (AmazonServiceException e) {
         if (e.getErrorCode().equals(INVALID_PARAMETER_VALUE) &&
@@ -503,7 +579,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         DescribePlacementGroupsResult result = client.describePlacementGroups(
             new DescribePlacementGroupsRequest().withGroupNames(placementGroup));
 
-        checkCount(accumulator, PLACEMENT_GROUP, localizationContext, "Placement group",
+        checkSingleElement(accumulator, PLACEMENT_GROUP, localizationContext, "Placement group",
             result.getPlacementGroups());
       } catch (AmazonServiceException e) {
         if (e.getErrorCode().startsWith(INVALID_PLACEMENT_GROUP_ID)) {
@@ -587,7 +663,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
     try {
       DescribeSubnetsResult result = client.describeSubnets(
           new DescribeSubnetsRequest().withSubnetIds(subnetId));
-      checkCount(accumulator, SUBNET_ID, localizationContext, "Subnet",
+      checkSingleElement(accumulator, SUBNET_ID, localizationContext, "Subnet",
           result.getSubnets());
       if (result.getSubnets().size() == 1) {
         return ImmutableMap.of(Iterables.getOnlyElement(result.getSubnets()).getVpcId(), subnetId);
@@ -628,7 +704,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
       try {
         DescribeSecurityGroupsResult result = client.describeSecurityGroups(
             new DescribeSecurityGroupsRequest().withGroupIds(securityGroupId));
-        checkCount(accumulator, SECURITY_GROUP_IDS, localizationContext, securityGroupId,
+        checkSingleElement(accumulator, SECURITY_GROUP_IDS, localizationContext, securityGroupId,
             result.getSecurityGroups()
         );
         if (result.getSecurityGroups().size() == 1) {
@@ -897,7 +973,7 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
         DescribeKeyPairsResult result = client.describeKeyPairs(
             new DescribeKeyPairsRequest().withKeyNames(keyName));
         // TODO Should this be REDACTED instead of NotDisplayed?
-        checkCount(accumulator, KEY_NAME, localizationContext, "NotDisplayed",
+        checkSingleElement(accumulator, KEY_NAME, localizationContext, "NotDisplayed",
             result.getKeyPairs());
 
       } catch (AmazonServiceException e) {
@@ -990,8 +1066,8 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
   }
 
   /**
-   * Verifies that the specified result list has exactly one element, and reports an appropriate
-   * error otherwise.
+   * Verifies that the specified result list has exactly one element, and
+   * reports an appropriate error otherwise.
    *
    * @param accumulator         the exception condition accumulator
    * @param token               the token representing the configuration property in error
@@ -999,16 +1075,41 @@ public class EC2InstanceTemplateConfigurationValidator implements ConfigurationV
    * @param field               the problem field value
    * @param result              the result list to be validated
    */
-  private void checkCount(PluginExceptionConditionAccumulator accumulator,
-      ConfigurationPropertyToken token, LocalizationContext localizationContext,
-      String field, List<?> result) {
+  private void checkSingleElement(
+      PluginExceptionConditionAccumulator accumulator,
+      ConfigurationPropertyToken token,
+      LocalizationContext localizationContext,
+      String field,
+      List<?> result) {
+    checkAtLeastOneElement(accumulator, token, localizationContext, field, result, true);
+  }
+
+  /**
+   * Verifies that the specified result list has at least one element, and
+   * possibly no more than one, and reports an appropriate error otherwise.
+   *
+   * @param accumulator         the exception condition accumulator
+   * @param token               the token representing the configuration
+   *                            property in error
+   * @param localizationContext the localization context
+   * @param field               the problem field value
+   * @param result              the result list to be validated
+   * @param atMostOneAllowed    true to check that there is exactly one element
+   */
+  private void checkAtLeastOneElement(
+      PluginExceptionConditionAccumulator accumulator,
+      ConfigurationPropertyToken token,
+      LocalizationContext localizationContext,
+      String field,
+      List<?> result,
+      boolean atMostOneAllowed) {
 
     if (result.isEmpty()) {
       addError(accumulator, token, localizationContext,
           null, INVALID_COUNT_EMPTY_MSG, token.unwrap().getName(localizationContext), field);
     }
 
-    if (result.size() > 1) {
+    if (atMostOneAllowed && result.size() > 1) {
       addError(accumulator, token, localizationContext,
           null, INVALID_COUNT_DUPLICATES_MSG, token.unwrap().getName(localizationContext), field);
     }

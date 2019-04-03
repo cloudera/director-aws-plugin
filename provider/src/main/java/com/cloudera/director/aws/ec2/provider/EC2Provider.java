@@ -63,6 +63,7 @@ import com.amazonaws.services.ec2.model.Volume;
 import com.amazonaws.services.ec2.model.VolumeState;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.kms.AWSKMSClient;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
@@ -221,7 +222,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         boolean tagEbsVolumes = (template != null) &&
             (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST);
 
-        return new OnDemandAllocator(ec2Provider.allocationHelper, ec2Provider.client,
+        return new OnDemandAllocator(ec2Provider.allocationHelper, ec2Provider.client, ec2Provider.stsClient,
             tagEbsVolumes, ec2Provider.useTagOnCreate,
             template, virtualInstanceIds, minCount);
       }
@@ -237,7 +238,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
             (EBSAllocationStrategy.get(template) == EBSAllocationStrategy.AS_INSTANCE_REQUEST);
 
         return new SpotGroupAllocator(
-            ec2Provider.allocationHelper, ec2Provider.client,
+            ec2Provider.allocationHelper, ec2Provider.client, ec2Provider.stsClient,
             tagEbsVolumes, template, virtualInstanceIds, minCount);
       }
     },
@@ -248,8 +249,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
           EC2InstanceTemplate template, Collection<String> instanceIds, int minCount) {
 
         return new AutoScalingGroupAllocator(ec2Provider.allocationHelper,
-            ec2Provider.client, ec2Provider.autoScalingClient,
-            template, instanceIds.size(), minCount);
+            ec2Provider.client, ec2Provider.autoScalingClient, ec2Provider.stsClient,
+            template, instanceIds, minCount);
       }
     };
 
@@ -340,6 +341,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   private final AmazonEC2AsyncClient client;
   private final AmazonIdentityManagementClient identityManagementClient;
   private final AWSKMSClient kmsClient;
+  private final AWSSecurityTokenServiceAsyncClient stsClient;
   private final AmazonAutoScalingAsyncClient autoScalingClient;
 
   private final EphemeralDeviceMappings ephemeralDeviceMappings;
@@ -399,6 +401,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
       ClientProvider<AmazonAutoScalingAsyncClient> autoScalingClientProvider,
       ClientProvider<AmazonIdentityManagementClient> identityManagementClientProvider,
       ClientProvider<AWSKMSClient> kmsClientProvider,
+      ClientProvider<AWSSecurityTokenServiceAsyncClient> stsClientProvider,
       boolean useTagOnCreate,
       LocalizationContext cloudLocalizationContext) {
 
@@ -425,6 +428,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         identityManagementClientProvider, "identityManagementClientProvider is null")
         .getClient(configuration, accumulator, localizationContext, false);
     this.kmsClient = requireNonNull(kmsClientProvider, "kmsClientProvider is null")
+        .getClient(configuration, accumulator, localizationContext, false);
+    this.stsClient = requireNonNull(stsClientProvider, "stsClientProvider is null")
         .getClient(configuration, accumulator, localizationContext, false);
 
     if (accumulator.hasError()) {
@@ -690,8 +695,8 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
     Image image = getImage(template.getImage());
     Set<String> existingDeviceNames = getExistingDeviceNames(image.getBlockDeviceMappings());
 
-    EBSAllocator ebsAllocator = new EBSAllocator(this.client, this.awsTimeouts, ec2TagHelper, ebsDeviceMappings,
-        existingDeviceNames, useTagOnCreate);
+    EBSAllocator ebsAllocator = new EBSAllocator(this.client, this.stsClient, this.awsTimeouts, ec2TagHelper,
+        ebsDeviceMappings, existingDeviceNames, useTagOnCreate);
 
     List<InstanceEbsVolumes> instanceVolumes = ebsAllocator.createVolumes(template, instanceIdPairs);
 
@@ -835,6 +840,13 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
   @Override
   public Collection<EC2Instance> find(final EC2InstanceTemplate template, Collection<String> instanceIds)
       throws InterruptedException {
+
+    if (instanceIds.isEmpty()) {
+      InstanceAllocator allocator = InstanceAllocationStrategy.getInstanceAllocator(
+          this, template, instanceIds, 0);
+      instanceIds = allocator.getInstanceIds();
+    }
+
     LOG.debug("Finding instances {}", instanceIds);
 
     Collection<EC2Instance> ec2Instances = FluentIterable
@@ -1289,7 +1301,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         throw new TimeoutException(String.format("Timeout waiting for instance %s to start", ec2InstanceId));
       } catch (ExecutionException e) {
         if (AmazonServiceException.class.isInstance(e.getCause())) {
-          throw AWSExceptions.propagate((AmazonServiceException) e.getCause());
+          throw AWSExceptions.propagate(stsClient, (AmazonServiceException) e.getCause());
         }
         throw new UnrecoverableProviderException(e.getCause());
       }
@@ -1599,7 +1611,7 @@ public class EC2Provider extends AbstractComputeProvider<EC2Instance, EC2Instanc
         LOG.info("<< Result {}", result);
 
       } catch (AmazonClientException e) {
-        throw AWSExceptions.propagate(e);
+        throw AWSExceptions.propagate(stsClient, e);
       }
     }
   }

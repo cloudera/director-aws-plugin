@@ -26,6 +26,7 @@ import com.amazonaws.services.ec2.model.Instance;
 import com.amazonaws.services.ec2.model.InstanceBlockDeviceMapping;
 import com.amazonaws.services.ec2.model.InstanceStateName;
 import com.amazonaws.services.ec2.model.Tag;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.ec2.EC2Instance;
@@ -102,7 +103,12 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
   /**
    * The EC2 client.
    */
-  protected final AmazonEC2AsyncClient client;
+  protected final AmazonEC2AsyncClient ec2Client;
+
+  /**
+   * The STS client.
+   */
+  protected final AWSSecurityTokenServiceAsyncClient stsClient;
 
   /**
    * The tag helper.
@@ -143,7 +149,8 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
    * Creates an abstract instance allocator with the specified parameters.
    *
    * @param allocationHelper   the allocation helper
-   * @param client             the EC2 client
+   * @param ec2Client          the EC2 client
+   * @param stsClient          the STS client
    * @param tagEbsVolumes      whether to tag EBS volumes
    * @param template           the instance template
    * @param virtualInstanceIds the virtual instance IDs for the created instances
@@ -151,9 +158,10 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
    *                           can be allocated
    */
   public AbstractInstanceAllocator(AllocationHelper allocationHelper,
-      AmazonEC2AsyncClient client, boolean tagEbsVolumes,
+      AmazonEC2AsyncClient ec2Client, AWSSecurityTokenServiceAsyncClient stsClient, boolean tagEbsVolumes,
       EC2InstanceTemplate template, Collection<String> virtualInstanceIds, int minCount) {
-    this.client = client;
+    this.ec2Client = ec2Client;
+    this.stsClient = stsClient;
     this.allocationHelper = allocationHelper;
     this.ec2TagHelper = allocationHelper.getEC2TagHelper();
 
@@ -173,6 +181,12 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
   @Override
   @VisibleForTesting
   public abstract Collection<EC2Instance> allocate() throws InterruptedException;
+
+  @Override
+  @VisibleForTesting
+  public Collection<String> getInstanceIds() {
+    return virtualInstanceIds;
+  }
 
   @Override
   public abstract void delete() throws InterruptedException;
@@ -214,7 +228,7 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
       LOG.info(">> Waiting for {} instance(s) to get a private IP allocated", ec2InstanceIdToVirtualInstanceIds.size());
 
       try {
-        DescribeInstancesResult result = client.describeInstances(
+        DescribeInstancesResult result = ec2Client.describeInstances(
             new DescribeInstancesRequest().withInstanceIds(ec2InstanceIdToVirtualInstanceIds.keySet()));
 
         allocationHelper.forEachInstance(result, instance -> {
@@ -289,7 +303,7 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
       retryUntil(
           (Callable<Void>) () -> {
             LOG.info("Create tags request.");
-            client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
+            ec2Client.createTags(new CreateTagsRequest().withTags(tags).withResources(ec2InstanceId));
             LOG.info("Create tags request complete.");
             return null;
           },
@@ -298,7 +312,7 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
       LOG.warn("timeout waiting for spot instance {} tagged", ec2InstanceId);
     } catch (ExecutionException e) {
       if (AmazonServiceException.class.isInstance(e.getCause())) {
-        throw AWSExceptions.propagate((AmazonServiceException) e.getCause());
+        throw AWSExceptions.propagate(stsClient, (AmazonServiceException) e.getCause());
       }
       throw new UnrecoverableProviderException(e.getCause());
     }
@@ -324,7 +338,7 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
           () -> {
             DescribeInstancesRequest request = new DescribeInstancesRequest()
                 .withInstanceIds(Collections.singletonList(ec2InstanceId));
-            return client.describeInstances(request);
+            return ec2Client.describeInstances(request);
           },
           timeout);
     } catch (RetryException e) {
@@ -332,7 +346,7 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
       return;
     } catch (ExecutionException e) {
       if (AmazonServiceException.class.isInstance(e.getCause())) {
-        throw AWSExceptions.propagate((AmazonServiceException) e.getCause());
+        throw AWSExceptions.propagate(stsClient, (AmazonServiceException) e.getCause());
       }
       throw new UnrecoverableProviderException(e.getCause());
     }
@@ -350,6 +364,6 @@ public abstract class AbstractInstanceAllocator implements InstanceAllocator {
       throws InterruptedException {
     LOG.info(">> Tagging volume {} / {}", volumeId, virtualInstanceId);
     List<Tag> tags = ec2TagHelper.getInstanceTags(template, virtualInstanceId, userDefinedTags);
-    client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
+    ec2Client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
   }
 }

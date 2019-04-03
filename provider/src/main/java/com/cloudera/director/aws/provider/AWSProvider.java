@@ -24,6 +24,7 @@ import com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.kms.AWSKMSClient;
 import com.amazonaws.services.rds.AmazonRDSClient;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSClientConfig;
 import com.cloudera.director.aws.AWSCredentialsProviderChainProvider;
 import com.cloudera.director.aws.AWSFilters;
@@ -31,6 +32,7 @@ import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
 import com.cloudera.director.aws.STSRoles;
 import com.cloudera.director.aws.clientprovider.AWSKMSClientProvider;
+import com.cloudera.director.aws.clientprovider.AWSSTSClientProvider;
 import com.cloudera.director.aws.clientprovider.AmazonAutoScalingClientProvider;
 import com.cloudera.director.aws.clientprovider.AmazonEC2ClientProvider;
 import com.cloudera.director.aws.clientprovider.AmazonIdentityManagementClientProvider;
@@ -187,6 +189,11 @@ public class AWSProvider extends AbstractCloudProvider {
   private final ClientProvider<AWSKMSClient> awskmsClientProvider;
 
   /**
+   * An Amazon security token service client provider.
+   */
+  private final ClientProvider<AWSSecurityTokenServiceAsyncClient> awsStsClientProvider;
+
+  /**
    * An Amazon RDS client provider.
    */
   private final ClientProvider<AmazonRDSClient> amazonRDSClientProvider;
@@ -297,6 +304,8 @@ public class AWSProvider extends AbstractCloudProvider {
         this.credentialsProvider, this.clientConfiguration);
     this.awskmsClientProvider = new AWSKMSClientProvider(
         this.credentialsProvider, this.clientConfiguration);
+    this.awsStsClientProvider = new AWSSTSClientProvider(
+        this.credentialsProvider, this.clientConfiguration);
     this.amazonRDSClientProvider = new AmazonRDSClientProvider(
         this.credentialsProvider, this.clientConfiguration, this.rdsEndpoints);
   }
@@ -349,7 +358,7 @@ public class AWSProvider extends AbstractCloudProvider {
         virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
         amazonEC2ClientProvider, amazonAutoScalingClientProvider,
         amazonIdentityManagementClientProvider, awskmsClientProvider,
-        useTagOnCreate, localizationContext);
+        awsStsClientProvider, useTagOnCreate, localizationContext);
   }
 
   /**

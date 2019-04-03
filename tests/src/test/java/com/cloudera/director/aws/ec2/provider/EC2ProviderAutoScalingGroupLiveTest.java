@@ -29,6 +29,7 @@ import static com.cloudera.director.aws.test.EC2ProviderCommon.waitUntilRunningO
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.AUTOMATIC;
 import static com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate.SimpleResourceTemplateConfigurationPropertyToken.GROUP_ID;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeTrue;
@@ -165,41 +166,36 @@ public class EC2ProviderAutoScalingGroupLiveTest {
         UUID.randomUUID().toString(),
         UUID.randomUUID().toString()
     );
-    int count = requestIds1.size();
+    int count1 = requestIds1.size();
+
+    List<String> requestIds2 = Arrays.asList(
+        UUID.randomUUID().toString(),
+        requestIds1.get(0),
+        requestIds1.get(1)
+    );
+    int count2 = requestIds2.size();
 
     Callables2.callAll(
         () -> {
 
           try {
-            Collection<EC2Instance> instances = ec2Provider.allocate(instanceTemplate, requestIds1, count);
-            assertTrue(count == instances.size());
+            // verify initial ASG create
+            Collection<EC2Instance> instances = ec2Provider.allocate(instanceTemplate, requestIds1, count1);
+            assertEquals(count1, instances.size());
+            validateAutoScalingGroupAndInstances(ec2Provider,
+                groupId, expectedSuspendedProcesses, instanceTemplate, instances);
+
             // verify idempotency by reusing the same group ID
-            instances = ec2Provider.allocate(instanceTemplate, requestIds1, count);
-            assertTrue(count == instances.size());
+            instances = ec2Provider.allocate(instanceTemplate, requestIds1, count1);
+            assertEquals(count1, instances.size());
+            validateAutoScalingGroupAndInstances(ec2Provider,
+                groupId, expectedSuspendedProcesses, instanceTemplate, instances);
 
-            List<String> ec2InstanceIds = instances.stream()
-                .map((i) -> i.unwrap().getInstanceId()).collect(Collectors.toList());
-
-            List<AutoScalingGroup> autoScalingGroups =
-                ec2Provider.getAutoScalingClient().describeAutoScalingGroups(
-                    new DescribeAutoScalingGroupsRequest()
-                        .withAutoScalingGroupNames(groupId))
-                    .getAutoScalingGroups();
-            assertThat(autoScalingGroups.size()).isEqualTo(1);
-            AutoScalingGroup autoScalingGroup = autoScalingGroups.get(0);
-            assertThat(autoScalingGroup.getAutoScalingGroupName()).isEqualTo(groupId);
-
-            // Verify that the appropriate auto scaling processes were suspended.
-            Set<String> suspendedProcessNames = autoScalingGroup.getSuspendedProcesses().stream()
-                .map(SuspendedProcess::getProcessName)
-                .collect(Collectors.toSet());
-            assertThat(suspendedProcessNames).isEqualTo(expectedSuspendedProcesses);
-
-            Map<String, InstanceState> result =
-                waitUntilRunningOrTerminal(ec2Provider, instanceTemplate, ec2InstanceIds);
-            for (InstanceState state : result.values()) {
-              assertTrue(state.getInstanceStatus().equals(InstanceStatus.RUNNING));
-            }
+            // verify grow
+            instances = ec2Provider.allocate(instanceTemplate, requestIds2, count2);
+            assertEquals(count2, instances.size());
+            validateAutoScalingGroupAndInstances(ec2Provider,
+                groupId, expectedSuspendedProcesses, instanceTemplate, instances);
           } catch (AbstractPluginException e) {
             logPluginException(e);
             throw e;
@@ -208,7 +204,44 @@ public class EC2ProviderAutoScalingGroupLiveTest {
         },
         () -> {
           try {
-            ec2Provider.delete(instanceTemplate, requestIds1);
+            Collection<String> deletedInstanceIds = Sets.newHashSet();
+
+            Collection<EC2Instance> instances =
+                ec2Provider.find(instanceTemplate, Collections.emptyList());
+            assertEquals(count2, instances.size());
+            List<String> ec2InstanceIds = instances.stream()
+                .map((i) -> i.unwrap().getInstanceId()).collect(Collectors.toList());
+
+            // verify shrink
+            Collection<String> instanceIdsToShrink = ec2InstanceIds.subList(0, count2 - 1);
+            deletedInstanceIds.addAll(instanceIdsToShrink);
+            ec2Provider.delete(instanceTemplate, instanceIdsToShrink);
+            validateAutoScalingGroupAndInstances(ec2Provider,
+                groupId, expectedSuspendedProcesses, instanceTemplate, instances, deletedInstanceIds);
+
+            // verify idempotency of shrink
+            instanceIdsToShrink = ec2InstanceIds.subList(0, 1);
+            ec2Provider.delete(instanceTemplate, instanceIdsToShrink);
+            validateAutoScalingGroupAndInstances(ec2Provider,
+                groupId, expectedSuspendedProcesses, instanceTemplate, instances, deletedInstanceIds);
+
+            // verify shrink to 0
+            instanceIdsToShrink = ec2InstanceIds.subList(count2 - 1, count2);
+            deletedInstanceIds.addAll(instanceIdsToShrink);
+            ec2Provider.delete(instanceTemplate, instanceIdsToShrink);
+            validateAutoScalingGroupAndInstances(ec2Provider,
+                groupId, expectedSuspendedProcesses, instanceTemplate, instances, deletedInstanceIds);
+
+          } catch (AbstractPluginException e) {
+            logPluginException(e);
+            throw e;
+          }
+          return null;
+        },
+        () -> {
+          try {
+            // delete entire group
+            ec2Provider.delete(instanceTemplate, Collections.emptyList());
           } catch (AbstractPluginException e) {
             logPluginException(e);
             throw e;
@@ -216,6 +249,53 @@ public class EC2ProviderAutoScalingGroupLiveTest {
           return null;
         }
     );
+  }
+
+  private void validateAutoScalingGroupAndInstances(EC2Provider ec2Provider,
+      String groupId, Set<String> expectedSuspendedProcesses,
+      EC2InstanceTemplate instanceTemplate, Collection<EC2Instance> instances)
+      throws InterruptedException {
+    validateAutoScalingGroupAndInstances(ec2Provider, groupId, expectedSuspendedProcesses,
+        instanceTemplate, instances, Collections.emptyList());
+  }
+
+  private void validateAutoScalingGroupAndInstances(EC2Provider ec2Provider,
+      String groupId, Set<String> expectedSuspendedProcesses,
+      EC2InstanceTemplate instanceTemplate, Collection<EC2Instance> instances,
+      Collection<String> terminatedInstanceIds)
+      throws InterruptedException {
+    Set<String> ec2InstanceIds = instances.stream()
+        .map((i) -> i.unwrap().getInstanceId()).collect(Collectors.toSet());
+
+    validateAutoScalingGroup(ec2Provider, groupId, expectedSuspendedProcesses);
+
+    Map<String, InstanceState> result =
+        waitUntilRunningOrTerminal(ec2Provider, instanceTemplate, ec2InstanceIds);
+    for (Map.Entry<String, InstanceState> entry  : result.entrySet()) {
+      String instanceId = entry.getKey();
+      InstanceStatus expectedInstanceStatus = (terminatedInstanceIds.contains(instanceId))
+          ? InstanceStatus.DELETED
+          : InstanceStatus.RUNNING;
+      assertEquals(expectedInstanceStatus, entry.getValue().getInstanceStatus());
+    }
+  }
+
+  private void validateAutoScalingGroup(EC2Provider ec2Provider,
+      String groupId, Set<String> expectedSuspendedProcesses) {
+    List<AutoScalingGroup> autoScalingGroups =
+        ec2Provider.getAutoScalingClient().describeAutoScalingGroups(
+            new DescribeAutoScalingGroupsRequest()
+                .withAutoScalingGroupNames(groupId))
+            .getAutoScalingGroups();
+    assertThat(autoScalingGroups.size()).isEqualTo(1);
+    AutoScalingGroup autoScalingGroup = autoScalingGroups.get(0);
+    assertThat(autoScalingGroup.getAutoScalingGroupName()).isEqualTo(groupId);
+
+    // Verify that the appropriate auto scaling processes were suspended.
+    Set<String> suspendedProcessNames = autoScalingGroup.getSuspendedProcesses().stream()
+        .map(SuspendedProcess::getProcessName)
+        .collect(Collectors.toSet());
+    assertThat(suspendedProcessNames).isEqualTo(expectedSuspendedProcesses);
   }
 
   private void logPluginException(AbstractPluginException e) {

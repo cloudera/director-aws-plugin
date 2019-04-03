@@ -17,6 +17,8 @@ package com.cloudera.director.aws;
 import com.amazonaws.AmazonClientException;
 import com.amazonaws.AmazonServiceException;
 import com.amazonaws.services.ec2.model.StateReason;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
+import com.amazonaws.services.securitytoken.model.DecodeAuthorizationMessageRequest;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
 import com.cloudera.director.spi.v2.model.exception.InvalidCredentialsException;
 import com.cloudera.director.spi.v2.model.exception.PluginExceptionConditionAccumulator;
@@ -29,6 +31,7 @@ import com.google.common.collect.Maps;
 
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,18 +59,18 @@ public class AWSExceptions {
    * @return whether a {@code Throwable} indicates that an AWS resource cannot be found
    */
   public static boolean isNotFound(Throwable throwable) {
-    boolean retryNeeded = AmazonServiceException.class.isInstance(throwable)
+    boolean isNotFound = AmazonServiceException.class.isInstance(throwable)
         && ((AmazonServiceException) throwable).getErrorCode().endsWith(NOT_FOUND_ERROR_CODE);
 
-    if (retryNeeded) {
+    if (isNotFound) {
       if (LOG.isDebugEnabled()) {
         LOG.debug(RESOURCE_NOT_FOUND, throwable);
-      } else if (LOG.isInfoEnabled()) {
+      } else {
         LOG.info(RESOURCE_NOT_FOUND);
       }
     }
 
-    return retryNeeded;
+    return isNotFound;
   }
 
   /**
@@ -88,7 +91,12 @@ public class AWSExceptions {
   /**
    * Volume limit exceeded error code.
    */
-  public static final String VOLUME_LIMIT_EXCEEDED = "Client.VolumeLimitExceeded";
+  public static final String VOLUME_LIMIT_EXCEEDED = "VolumeLimitExceeded";
+
+  /**
+   * Volume limit exceeded state reason.
+   */
+  public static final String VOLUME_LIMIT_EXCEEDED_STATE_REASON = "Client.VolumeLimitExceeded";
 
   /**
    * Internal error error code.
@@ -102,6 +110,8 @@ public class AWSExceptions {
       "UnauthorizedOperation"
   );
 
+  public static final String ENCODED_MESSAGE_STRING = "Encoded authorization failure message:";
+
 
   /**
    * Parses a set of exceptions and a set of failed state reasons and throws
@@ -111,16 +121,24 @@ public class AWSExceptions {
    * will also be thrown if the set of failed state reason is not empty. In other cases a
    * {@link TransientProviderException} is thrown.
    *
+   * @param stsClient          the AWS STS client for decoding authorization messages
    * @param message            the plugin exception message to set
    * @param exceptions         a set of exceptions
    * @param failedStateReasons state reasons for instances that transitioned to terminated
    * @param template           the EC2 instance template
    */
-  public static void propagate(String message, Set<Exception> exceptions,
+  public static void propagate(AWSSecurityTokenServiceAsyncClient stsClient, String message, Set<Exception> exceptions,
       Set<StateReason> failedStateReasons, EC2InstanceTemplate template) {
     PluginExceptionConditionAccumulator accumulator = new PluginExceptionConditionAccumulator();
 
-    boolean isUnrecoverable = addErrors(template, exceptions, accumulator);
+    Set<Exception> decodedExceptions = exceptions.stream()
+        .map(e -> {
+          if (e instanceof AmazonServiceException)
+            return decodeAuthorizationMessageIfPossible(stsClient, (AmazonServiceException) e);
+          return e;
+        })
+        .collect(Collectors.toSet());
+    boolean isUnrecoverable = addErrors(template, decodedExceptions, accumulator);
 
     if (!failedStateReasons.isEmpty()) {
       isUnrecoverable = true;
@@ -138,17 +156,33 @@ public class AWSExceptions {
   }
 
   /**
+   * Returns an appropriate SPI exception in response to the specified AWS exception.
+   *
+   * @param stsClient the AWS STS client for decoding authorization messages
+   * @param e         the AWS exception
+   * @return the corresponding SPI exception
+   */
+  public static RuntimeException propagate(AWSSecurityTokenServiceAsyncClient stsClient, AmazonClientException e) {
+    propagateIfUnrecoverable(stsClient, e);
+
+    // otherwise assume this is a transient error
+    throw new TransientProviderException(e.getMessage(), e);
+  }
+
+  /**
    * Propagates exception as an unrecoverable error when the relevant
    * indicators are present.
    *
-   * @param e the Amazon client exception
+   * @param stsClient the AWS STS client for decoding authorization messages
+   * @param e         the Amazon client exception
    */
-  public static void propagateIfUnrecoverable(AmazonClientException e) {
+  public static void propagateIfUnrecoverable(AWSSecurityTokenServiceAsyncClient stsClient, AmazonClientException e) {
     if (isUnrecoverable(e)) {
       if (e instanceof AmazonServiceException) {
         AmazonServiceException ase = (AmazonServiceException) e;
         if (AUTHORIZATION_ERROR_CODES.contains(ase.getErrorCode())) {
-          throw new InvalidCredentialsException(ase.getErrorMessage(), ase);
+          AmazonServiceException decodedException = decodeAuthorizationMessageIfPossible(stsClient, ase);
+          throw new InvalidCredentialsException(decodedException.getErrorMessage(), decodedException);
         }
       }
       throw new UnrecoverableProviderException(e.getMessage(), e);
@@ -198,9 +232,10 @@ public class AWSExceptions {
         return true;
       }
 
-      // Consider instance limits, insufficient capacity, and internal error as unrecoverable
+      // Consider instance limits, insufficient capacity, volume limits, and internal error as unrecoverable
       if (INSTANCE_LIMIT_EXCEEDED.equals(ase.getErrorCode()) ||
           INSUFFICIENT_INSTANCE_CAPACITY.equals(ase.getErrorCode()) ||
+          VOLUME_LIMIT_EXCEEDED.equals(ase.getErrorCode()) ||
           INTERNAL_ERROR.equals(ase.getErrorCode())) {
         return true;
       }
@@ -210,16 +245,35 @@ public class AWSExceptions {
   }
 
   /**
-   * Returns an appropriate SPI exception in response to the specified AWS exception.
+   * Decodes authorization messages if possible. Will not fail if the messages cannot be decoded.
    *
-   * @param e the AWS exception
-   * @return the corresponding SPI exception
+   * @param stsClient the client to use to decode the authorization messages
+   * @param e         the exception to decode the message from
+   * @return the exception with a decoded message, or as is if the message could not be decoded
    */
-  public static RuntimeException propagate(AmazonClientException e) {
-    propagateIfUnrecoverable(e);
+  public static AmazonServiceException decodeAuthorizationMessageIfPossible(
+      AWSSecurityTokenServiceAsyncClient stsClient,
+      AmazonServiceException e) {
 
-    // otherwise assume this is a transient error
-    throw new TransientProviderException(e.getMessage(), e);
+    String errorMessage = e.getErrorMessage();
+    if (stsClient != null && AUTHORIZATION_ERROR_CODES.contains(e.getErrorCode()) &&
+        errorMessage.contains(ENCODED_MESSAGE_STRING)) {
+      try {
+        int indexOfEncodedMessage = errorMessage.indexOf(ENCODED_MESSAGE_STRING);
+        String encodedErrorMessage = errorMessage.substring(
+            errorMessage.indexOf(ENCODED_MESSAGE_STRING) + ENCODED_MESSAGE_STRING.length());
+        DecodeAuthorizationMessageRequest request = new DecodeAuthorizationMessageRequest();
+        request.setEncodedMessage(encodedErrorMessage);
+        e.setErrorMessage(errorMessage.substring(0, indexOfEncodedMessage) + "Decoded authorization message: " +
+            stsClient.decodeAuthorizationMessage(request).getDecodedMessage());
+        LOG.debug("Successfully decoded authorization message.");
+      } catch (AmazonClientException clientException) {
+        LOG.warn("Unable to decode authorization message.");
+        LOG.debug("Unable to decode authorization message.", e);
+      }
+    }
+
+    return e;
   }
 
   /**
@@ -278,7 +332,7 @@ public class AWSExceptions {
       String stateReasonMessage = stateReason.getMessage();
 
       String message = "Instance(s) were unexpectedly terminated";
-      if (stateReasonCode.equals(VOLUME_LIMIT_EXCEEDED)) {
+      if (stateReasonCode.equals(VOLUME_LIMIT_EXCEEDED_STATE_REASON)) {
         message = String.format("Instance(s) were terminated due to volume limits for %s volume type",
             template.getEbsVolumeType());
       }

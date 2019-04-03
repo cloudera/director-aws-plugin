@@ -45,6 +45,7 @@ import com.amazonaws.services.ec2.model.Volume;
 import com.amazonaws.services.ec2.model.VolumeAttachment;
 import com.amazonaws.services.ec2.model.VolumeAttachmentState;
 import com.amazonaws.services.ec2.model.VolumeState;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.ec2.EC2InstanceTemplate;
@@ -103,7 +104,8 @@ public class EBSAllocator {
   @VisibleForTesting
   static final char DEVICE_NAME_START_CHAR = 'f';
 
-  private final AmazonEC2Client client;
+  private final AmazonEC2Client ec2Client;
+  private final AWSSecurityTokenServiceAsyncClient stsClient;
   private final long availableTimeoutSeconds;
   private final long attachTimeoutSeconds;
   private final long detachTimeoutSeconds;
@@ -115,27 +117,29 @@ public class EBSAllocator {
   /**
    * Constructs a new EBS allocator instance.
    *
-   * @param client             a pre-configured ec2 client
+   * @param ec2Client          a pre-configured ec2 client
+   * @param stsClient          a pre-configured STS client
    * @param awsTimeouts        the AWS timeouts
    * @param ec2TagHelper       the custom tag mappings
    * @param ebsDeviceMappings  helper object to retrieve device mappings
    * @param excludeDeviceNames set of device names that should be excluded when attaching the volumes
    */
-  public EBSAllocator(AmazonEC2Client client, AWSTimeouts awsTimeouts,
+  public EBSAllocator(AmazonEC2Client ec2Client, AWSSecurityTokenServiceAsyncClient stsClient, AWSTimeouts awsTimeouts,
       EC2TagHelper ec2TagHelper, EBSDeviceMappings ebsDeviceMappings,
       Set<String> excludeDeviceNames, boolean useTagOnCreate) {
     checkNotNull(awsTimeouts, "awsTimeouts is null");
 
-    this.client = checkNotNull(client, "ec2 client is null");
+    this.ec2Client = requireNonNull(ec2Client, "ec2Client is null");
+    this.stsClient = requireNonNull(stsClient, "stsClient is null");
     this.availableTimeoutSeconds =
         awsTimeouts.getTimeout(TIMEOUT_AVAILABLE).or(DEFAULT_TIMEOUT_SECONDS);
     this.attachTimeoutSeconds =
         awsTimeouts.getTimeout(TIMEOUT_ATTACH).or(DEFAULT_TIMEOUT_SECONDS);
     this.detachTimeoutSeconds =
         awsTimeouts.getTimeout(TIMEOUT_DETACH).or(DEFAULT_TIMEOUT_SECONDS);
-    this.ec2TagHelper = checkNotNull(ec2TagHelper, "ec2TagHelper is null");
-    this.ebsDeviceMappings = checkNotNull(ebsDeviceMappings, "ebsDeviceMappings is null");
-    this.excludeDeviceNames = checkNotNull(excludeDeviceNames, "excludeDeviceNames is null");
+    this.ec2TagHelper = requireNonNull(ec2TagHelper, "ec2TagHelper is null");
+    this.ebsDeviceMappings = requireNonNull(ebsDeviceMappings, "ebsDeviceMappings is null");
+    this.excludeDeviceNames = requireNonNull(excludeDeviceNames, "excludeDeviceNames is null");
     this.useTagOnCreate = useTagOnCreate;
   }
 
@@ -272,7 +276,7 @@ public class EBSAllocator {
 
       for (CreateVolumeRequest request : createVolumeRequests) {
         try {
-          CreateVolumeResult result = client.createVolume(request);
+          CreateVolumeResult result = ec2Client.createVolume(request);
           String volumeId = result.getVolume().getVolumeId();
           volumes.put(volumeId, VolumeState.Creating);
         } catch (AmazonServiceException ex) {
@@ -343,7 +347,7 @@ public class EBSAllocator {
             .withVolumeIds(volumesToCheck);
 
         try {
-          List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
+          List<Volume> volumes = ec2Client.describeVolumes(volumeRequest).getVolumes();
 
           for (Volume volume : volumes) {
             String id = volume.getVolumeId();
@@ -375,7 +379,7 @@ public class EBSAllocator {
           if (ex.getErrorCode().equals("InvalidVolume.NotFound")) {
             LOG.info("Requested volume(s) not yet found");
           } else {
-            throw AWSExceptions.propagate(ex);
+            throw AWSExceptions.propagate(stsClient, ex);
           }
         }
 
@@ -457,7 +461,7 @@ public class EBSAllocator {
         try {
           retryUntil(
               (Callable<Void>) () -> {
-                client.attachVolume(volumeRequest);
+                ec2Client.attachVolume(volumeRequest);
                 return null;
               },
               timeout);
@@ -466,7 +470,7 @@ public class EBSAllocator {
           LOG.warn("timeout attaching volume {} to instance {}", volumeId, ec2InstanceId);
         } catch (ExecutionException ex) {
           if (AmazonServiceException.class.isInstance(ex.getCause())) {
-            AWSExceptions.propagateIfUnrecoverable((AmazonServiceException) ex.getCause());
+            AWSExceptions.propagateIfUnrecoverable(stsClient, (AmazonServiceException) ex.getCause());
           }
 
           LOG.error(String.format("Failed to attach volume %s to instance %s with device name %s",
@@ -514,12 +518,12 @@ public class EBSAllocator {
           LOG.info("Detaching volume {}.", id);
           DetachVolumeRequest detachVolumeRequest = new DetachVolumeRequest()
               .withVolumeId(id);
-          client.detachVolume(detachVolumeRequest);
+          ec2Client.detachVolume(detachVolumeRequest);
 
           // Wait for the instance to detach
           DateTime timeout = DateTime.now().plusSeconds((int) detachTimeoutSeconds);
           while (DateTime.now().isBefore(timeout)) {
-            DescribeVolumesResult describeVolumeResult = client.describeVolumes(new DescribeVolumesRequest()
+            DescribeVolumesResult describeVolumeResult = ec2Client.describeVolumes(new DescribeVolumesRequest()
                 .withVolumeIds(id));
 
             if (describeVolumeResult.getVolumes().size() != 1) {
@@ -564,7 +568,7 @@ public class EBSAllocator {
       DeleteVolumeRequest request = new DeleteVolumeRequest().withVolumeId(id);
 
       try {
-        client.deleteVolume(request);
+        ec2Client.deleteVolume(request);
         LOG.info("Volume {} deleted.", id);
       } catch (AmazonClientException e) {
         LOG.error("<< Failed to delete volume " + id, e);
@@ -573,7 +577,7 @@ public class EBSAllocator {
     }
 
     if (ex != null) {
-      throw AWSExceptions.propagate(ex);
+      throw AWSExceptions.propagate(stsClient, ex);
     }
   }
 
@@ -596,7 +600,7 @@ public class EBSAllocator {
             .withInstanceId(ec2InstanceId);
 
         List<InstanceBlockDeviceMapping> blockDeviceMappings =
-            client.describeInstanceAttribute(instanceAttributeRequest)
+            ec2Client.describeInstanceAttribute(instanceAttributeRequest)
                 .getInstanceAttribute()
                 .getBlockDeviceMappings();
 
@@ -623,7 +627,7 @@ public class EBSAllocator {
               .withInstanceId(ec2InstanceId);
 
           try {
-            client.modifyInstanceAttribute(modifyRequest);
+            ec2Client.modifyInstanceAttribute(modifyRequest);
           } catch (AmazonClientException e) {
             LOG.error("Volume {} failed to attach.", volumeId);
           }
@@ -652,7 +656,7 @@ public class EBSAllocator {
       DescribeVolumesRequest describeVolumesRequest = new DescribeVolumesRequest()
           .withVolumeIds(volumeIds);
 
-      for (Volume volume : client.describeVolumes(describeVolumesRequest).getVolumes()) {
+      for (Volume volume : ec2Client.describeVolumes(describeVolumesRequest).getVolumes()) {
         volumeStatuses.put(volume.getVolumeId(), VolumeState.fromValue(volume.getState()));
       }
 
@@ -694,7 +698,7 @@ public class EBSAllocator {
     Stopwatch watch = Stopwatch.createStarted();
     while (watch.elapsed(TimeUnit.SECONDS) < attachTimeoutSeconds) {
       DescribeVolumesRequest volumeRequest = new DescribeVolumesRequest().withVolumeIds(unattachedVolumes);
-      List<Volume> volumes = client.describeVolumes(volumeRequest).getVolumes();
+      List<Volume> volumes = ec2Client.describeVolumes(volumeRequest).getVolumes();
 
       for (Volume volume : volumes) {
         VolumeAttachment attachment = Iterables.getOnlyElement(volume.getAttachments());
@@ -734,7 +738,7 @@ public class EBSAllocator {
       String instanceId, String volumeId) throws InterruptedException {
     LOG.info(">> Tagging volume {} / {}", volumeId, instanceId);
     List<Tag> tags = ec2TagHelper.getInstanceTags(template, instanceId, userDefinedTags);
-    client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
+    ec2Client.createTags(new CreateTagsRequest().withTags(tags).withResources(volumeId));
   }
 
   /**
@@ -745,7 +749,7 @@ public class EBSAllocator {
    */
   private String getAvailabilityZoneFromSubnetId(String subnetId) {
     DescribeSubnetsRequest request = new DescribeSubnetsRequest().withSubnetIds(subnetId);
-    DescribeSubnetsResult result = client.describeSubnets(request);
+    DescribeSubnetsResult result = ec2Client.describeSubnets(request);
     Subnet subnet = Iterables.getOnlyElement(result.getSubnets());
     return subnet.getAvailabilityZone();
   }

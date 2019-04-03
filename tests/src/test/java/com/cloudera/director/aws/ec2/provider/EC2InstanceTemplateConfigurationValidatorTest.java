@@ -18,10 +18,10 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.BLOCK_DURATION_MINUTES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_IOPS;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_KMS_KEY_ID;
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_COUNT;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_SIZE_GIB;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.EBS_VOLUME_TYPE;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.ENCRYPT_ADDITIONAL_EBS_VOLUMES;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IAM_PROFILE_NAME;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.IMAGE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.KEY_NAME;
@@ -32,8 +32,8 @@ import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTempl
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_BID_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SPOT_PRICE_USD_PER_HR;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.SUBNET_ID;
-import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TENANCY;
+import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.TYPE;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USER_DATA_UNENCODED;
 import static com.cloudera.director.aws.ec2.EC2InstanceTemplate.EC2InstanceTemplateConfigurationPropertyToken.USE_SPOT_INSTANCES;
@@ -51,8 +51,8 @@ import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigur
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_AMI_PLATFORM_MSG;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_AMI_PLATFORM_SPOT_MSG;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_AMI_ROOT_DEVICE_TYPE_MSG;
-import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_COUNT_FORMAT_MSG;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_ENCRYPTION_MSG;
+import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_COUNT_FORMAT_MSG;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_COUNT_MSG;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_EBS_VOLUME_SIZE_FORMAT_MSG;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.INVALID_IAM_PROFILE_NAME_MSG;
@@ -68,6 +68,9 @@ import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigur
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.ROOT_VOLUME_TYPES;
 import static com.cloudera.director.aws.ec2.provider.EC2InstanceTemplateConfigurationValidator.VOLUME_SIZE_NOT_IN_RANGE_MSG;
 import static com.cloudera.director.spi.v2.compute.ComputeInstanceTemplate.ComputeInstanceTemplateConfigurationPropertyToken.AUTOMATIC;
+
+import static java.time.LocalDateTime.now;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.any;
 import static org.mockito.Mockito.mock;
@@ -92,6 +95,7 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Describ
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeSecurityGroupsResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeSubnetsRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeSubnetsResult;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Filter;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Image;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.InstanceType;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.KeyPairInfo;
@@ -118,6 +122,7 @@ import com.google.common.base.Optional;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
+import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
@@ -127,6 +132,7 @@ import java.util.Collections;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -230,8 +236,14 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
     return image;
   }
 
-  private void mockImageAttributes(Image image, String architecture, String platform,
-      String state, String virtualizationType, String rootDeviceType, String ownerId) {
+  private void mockImageAttributes(
+      Image image,
+      String architecture,
+      String platform,
+      String state,
+      String virtualizationType,
+      String rootDeviceType,
+      String ownerId) {
     when(image.getArchitecture()).thenReturn(architecture);
     when(image.getPlatform()).thenReturn(platform);
     when(image.getState()).thenReturn(state);
@@ -259,10 +271,47 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
   }
 
   @Test
-  public void testCheckImage_NonAMI() {
+  public void testCheckImage_NonAMI_NonMarketplace() {
     String amiName = "xyz-1234567";
     checkImage(amiName, TYPE_STRING, false);
     verifySingleError(IMAGE, INVALID_AMI_NAME_MSG, amiName);
+  }
+
+  @Test
+  public void testCheckImage_Marketplace() {
+    String imageName = "imageName";
+    String[] productCodes = new String[]{"pc1", "pc2"};
+
+    Image image1 = mock(Image.class);
+    mockImageAttributes(image1, "x86_64", null, "available", PARAVIRTUAL_VIRTUALIZATION, "ebs", null);
+    when(image1.getCreationDate()).thenReturn(now().toString() + "Z");
+    when(image1.getImageId()).thenReturn(IMAGE_NAME);
+
+    Image image2 = mock(Image.class);
+    mockImageAttributes(image2, "x86_64", null, "available", PARAVIRTUAL_VIRTUALIZATION, "ebs", null);
+    when(image2.getCreationDate()).thenReturn(now().minusMinutes(1).toString() + "Z");
+    when(image2.getImageId()).thenReturn(UUID.randomUUID().toString());
+
+    when(virtualizationMappings.apply(PARAVIRTUAL_VIRTUALIZATION))
+        .thenReturn(ImmutableList.of(TYPE_STRING));
+    when(ec2Client.describeImages(any(DescribeImagesRequest.class)))
+        .thenReturn(new DescribeImagesResult().withImages(image1, image2));
+
+    checkImage(imageName, TYPE_STRING, false, productCodes);
+
+    assertThat(accumulator.hasError()).isFalse();
+    assertThat(accumulator.hasWarning()).isTrue();
+    assertThat(
+        Iterables
+            .getOnlyElement(accumulator.getConditionsByKey().get(IMAGE.unwrap().getConfigKey()))
+            .getMessage())
+        .contains(IMAGE_NAME);
+
+    ArgumentCaptor<DescribeImagesRequest> reqCaptor =
+        ArgumentCaptor.forClass(DescribeImagesRequest.class);
+    verify(ec2Client).describeImages(reqCaptor.capture());
+    DescribeImagesRequest req = reqCaptor.getValue();
+    assertThat(req.getFilters()).contains(new Filter().withName("product-code").withValues(productCodes));
   }
 
   @Test
@@ -983,12 +1032,15 @@ public class EC2InstanceTemplateConfigurationValidatorTest {
    * @param type             the instance type
    * @param useSpotInstances whether to use Spot instances
    */
-  protected void checkImage(String amiName, String type, boolean useSpotInstances) {
+  protected void checkImage(String amiName, String type, boolean useSpotInstances, String... productCodes) {
     Map<String, String> configMap = Maps.newHashMap();
     configMap.put(IMAGE.unwrap().getConfigKey(), amiName);
     configMap.put(TYPE.unwrap().getConfigKey(), type);
     if (useSpotInstances) {
       configMap.put(USE_SPOT_INSTANCES.unwrap().getConfigKey(), String.valueOf(true));
+    }
+    if (productCodes != null) {
+      configMap.put("_whitelisted_product_codes", String.join(" ", productCodes));
     }
     Configured configuration = new SimpleConfiguration(configMap);
     validator.checkImage(ec2Client, configuration, accumulator, localizationContext);

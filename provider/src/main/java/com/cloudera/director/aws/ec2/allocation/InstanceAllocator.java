@@ -19,7 +19,7 @@ import com.cloudera.director.aws.ec2.EC2Instance;
 import java.util.Collection;
 
 /**
- * Represents a configured strategy for creating and deleting groups of EC2 instances.
+ * Represents a configured strategy for creating, finding, and deleting groups of EC2 instances.
  */
 public interface InstanceAllocator {
 
@@ -30,6 +30,14 @@ public interface InstanceAllocator {
    * @throws InterruptedException if the process is interrupted
    */
   Collection<EC2Instance> allocate() throws InterruptedException;
+
+  /**
+   * Returns the instance IDs.
+   *
+   * @return the instance IDs
+   * @throws InterruptedException if the process is interrupted
+   */
+  Collection<String> getInstanceIds() throws InterruptedException;
 
   /**
    * Deletes EC2 instances.

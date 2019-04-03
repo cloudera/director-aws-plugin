@@ -44,6 +44,7 @@ import com.amazonaws.services.ec2.model.Tag;
 import com.amazonaws.services.ec2.model.TagSpecification;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.kms.AWSKMSClient;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSFilters;
 import com.cloudera.director.aws.AWSTimeouts;
 import com.cloudera.director.aws.CustomTagMappings;
@@ -237,10 +238,14 @@ public class EC2ProviderLocalTest {
     AWSKMSClient kmsClient = mock(AWSKMSClient.class);
     when(kmsClientProvider.getClient(any(Configured.class), any(PluginExceptionConditionAccumulator.class),
         any(LocalizationContext.class), anyBoolean())).thenReturn(kmsClient);
+    ClientProvider<AWSSecurityTokenServiceAsyncClient> stsClientProvider = mock(ClientProvider.class);
+    AWSSecurityTokenServiceAsyncClient stsClient = mock(AWSSecurityTokenServiceAsyncClient.class);
+    when(stsClientProvider.getClient(any(Configured.class), any(PluginExceptionConditionAccumulator.class),
+        any(LocalizationContext.class), anyBoolean())).thenReturn(stsClient);
 
     return new EC2Provider(new SimpleConfiguration(), ephemeralDeviceMappings, ebsDeviceMappings, ebsMetadata,
         virtualizationMappings, awsFilters, awsTimeouts, customTagMappings, networkRules,
-        ec2ClientProvider, autoScalingClientProvider, identityClientProvider, kmsClientProvider,
+        ec2ClientProvider, autoScalingClientProvider, identityClientProvider, kmsClientProvider, stsClientProvider,
         true, LOCALIZATION_CONTEXT);
   }
 

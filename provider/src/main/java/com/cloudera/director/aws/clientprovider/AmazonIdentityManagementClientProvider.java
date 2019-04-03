@@ -22,6 +22,7 @@ import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.amazonaws.services.identitymanagement.model.GetInstanceProfileRequest;
 import com.amazonaws.services.identitymanagement.model.NoSuchEntityException;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
 import com.cloudera.director.spi.v2.model.Configured;
@@ -88,7 +89,9 @@ public class AmazonIdentityManagementClientProvider
       }
 
     } catch (AmazonClientException e) {
-      throw AWSExceptions.propagate(e);
+      AWSSecurityTokenServiceAsyncClient stsClient = new AWSSTSClientProvider(awsCredentialsProvider,
+          clientConfiguration) .doConfigure(configuration, accumulator, providerLocalizationContext, verify);
+      throw AWSExceptions.propagate(stsClient, e);
     } catch (IllegalArgumentException e) {
       accumulator.addError(IAM_ENDPOINT.unwrap().getConfigKey(), e.getMessage());
     }

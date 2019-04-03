@@ -23,6 +23,7 @@ import com.amazonaws.ClientConfiguration;
 import com.amazonaws.auth.AWSCredentialsProvider;
 import com.amazonaws.regions.RegionUtils;
 import com.amazonaws.services.autoscaling.AmazonAutoScalingAsyncClient;
+import com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.AWSExceptions;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
@@ -77,7 +78,9 @@ public class AmazonAutoScalingClientProvider
       }
       client.setEndpoint(regionEndpoint);
     } catch (AmazonClientException e) {
-      throw AWSExceptions.propagate(e);
+      AWSSecurityTokenServiceAsyncClient stsClient = new AWSSTSClientProvider(awsCredentialsProvider,
+          clientConfiguration) .doConfigure(configuration, accumulator, providerLocalizationContext, verify);
+      throw AWSExceptions.propagate(stsClient, e);
     } catch (IllegalArgumentException e) {
       accumulator.addError(REGION.unwrap().getConfigKey(), e.getMessage());
     }

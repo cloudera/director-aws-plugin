@@ -122,6 +122,22 @@ public enum EC2ProviderConfigurationPropertyToken
       .build()),
 
   /**
+   * <p>Custom endpoint identifying a region for STS.</p>
+   * <p>This is critical for Gov. cloud because there is no other way to discover those
+   * regions.</p>
+   */
+  STS_REGION_ENDPOINT(new SimpleConfigurationPropertyBuilder()
+      .configKey("stsRegionEndpoint")
+      .name("STS region endpoint")
+      .defaultDescription("<p>STS endpoint is an optional URL that Cloudera Altus Director can use to " +
+          "communicate with the AWS STS service. AWS provides multiple regional endpoints for STS. " +
+          "as well as GovCloud endpoints.</p>For more information see the <a target=\"_blank\" " +
+          "href=\"https://docs.aws.amazon.com/general/latest/gr/rande.html#sts_region\">AWS " +
+          "documentation.</a>")
+      .defaultPlaceholder("Optionally override the STS endpoint URL")
+      .build()),
+
+  /**
    * EC2 region. Each region is a separate geographic area. Each region has multiple, isolated
    * locations known as Availability Zones. A defaultPlaceholder message has been added in lieu
    * of a default value.

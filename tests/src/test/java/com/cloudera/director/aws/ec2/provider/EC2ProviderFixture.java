@@ -34,6 +34,7 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.Amazo
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.AWSKMSClient;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.shaded.com.google.common.base.Optional;
 import com.cloudera.director.spi.v2.model.Configured;
 import com.cloudera.director.spi.v2.model.LocalizationContext;
@@ -57,6 +58,7 @@ public class EC2ProviderFixture {
   private ClientProvider<AmazonAutoScalingAsyncClient> autoScalingClientProvider;
   private ClientProvider<AmazonIdentityManagementClient> iamClientProvider;
   private ClientProvider<AWSKMSClient> kmsClientProvider;
+  private ClientProvider<AWSSecurityTokenServiceAsyncClient> stsClientProvider;
   private LocalizationContext localizationContext;
 
   private AWSFilters ec2Filters;
@@ -80,6 +82,7 @@ public class EC2ProviderFixture {
     autoScalingClientProvider = mock(ClientProvider.class);
     iamClientProvider = mock(ClientProvider.class);
     kmsClientProvider = mock(ClientProvider.class);
+    stsClientProvider = mock(ClientProvider.class);
     localizationContext = new DefaultLocalizationContext(Locale.US, "test");
 
     // for EC2Provider itself
@@ -121,7 +124,7 @@ public class EC2ProviderFixture {
     return new EC2Provider(configured, edMappings, ebsMappings, ebsMetadata, vMappings,
                            filters, timeouts, tagMappings, networkRules,
                            ec2ClientProvider, autoScalingClientProvider, iamClientProvider,
-                           kmsClientProvider, true, localizationContext);
+                           kmsClientProvider, stsClientProvider, true, localizationContext);
   }
 
   public Configured getConfigured() {

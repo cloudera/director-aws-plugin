@@ -52,6 +52,7 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.StateRe
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.Tag;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.identitymanagement.AmazonIdentityManagementClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.kms.AWSKMSClient;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.shaded.com.google.common.base.Function;
 import com.cloudera.director.aws.shaded.com.google.common.base.Predicate;
 import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigFactory;
@@ -101,6 +102,7 @@ public class EC2ProviderTest {
   private AmazonAutoScalingAsyncClient autoScalingClient;
   private AmazonIdentityManagementClient identityManagementClient;
   private AWSKMSClient kmsClient;
+  private AWSSecurityTokenServiceAsyncClient stsClient;
 
   private BlockDeviceMapping ebs1, ebs1x, ebs2;
   private BlockDeviceMapping eph2;
@@ -152,10 +154,16 @@ public class EC2ProviderTest {
     when(identityManagementClientProvider.getClient(any(Configured.class),
         any(PluginExceptionConditionAccumulator.class), any(LocalizationContext.class),
         anyBoolean())).thenReturn(identityManagementClient);
+    kmsClient = mock(AWSKMSClient.class);
     ClientProvider kmsClientProvider = mock(ClientProvider.class);
-    when(identityManagementClientProvider.getClient(any(Configured.class),
+    when(kmsClientProvider.getClient(any(Configured.class),
         any(PluginExceptionConditionAccumulator.class), any(LocalizationContext.class),
         anyBoolean())).thenReturn(kmsClient);
+    stsClient = mock(AWSSecurityTokenServiceAsyncClient.class);
+    ClientProvider stsClientProvider = mock(ClientProvider.class);
+    when(stsClientProvider.getClient(any(Configured.class),
+        any(PluginExceptionConditionAccumulator.class), any(LocalizationContext.class),
+        anyBoolean())).thenReturn(stsClient);
     ec2Provider = new EC2Provider(
         new SimpleConfiguration(),
         ephemeralDeviceMappings,
@@ -170,6 +178,7 @@ public class EC2ProviderTest {
         autoScalingClientProvider,
         identityManagementClientProvider,
         kmsClientProvider,
+        stsClientProvider,
         true,
         DEFAULT_PLUGIN_LOCALIZATION_CONTEXT);
 

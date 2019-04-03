@@ -28,7 +28,7 @@ public class AWSExceptionsTest {
     AmazonServiceException e =
         new AmazonServiceException("Test Amazon UnauthorizedOperation exception");
     e.setErrorCode("UnauthorizedOperation");
-    AWSExceptions.propagate(e);
+    AWSExceptions.propagate(null, e);
   }
 
   @Test(expected = InvalidCredentialsException.class)
@@ -36,7 +36,7 @@ public class AWSExceptionsTest {
     AmazonServiceException e =
         new AmazonServiceException("Test Amazon AuthFailure exception");
     e.setErrorCode("AuthFailure");
-    AWSExceptions.propagate(e);
+    AWSExceptions.propagate(null, e);
   }
 
   @Test(expected = UnrecoverableProviderException.class)
@@ -44,7 +44,7 @@ public class AWSExceptionsTest {
     AmazonServiceException e =
         new AmazonServiceException("Test Amazon client error");
     e.setErrorType(AmazonServiceException.ErrorType.Client);
-    AWSExceptions.propagate(e);
+    AWSExceptions.propagate(null, e);
   }
 
   @Test(expected = UnrecoverableProviderException.class)
@@ -52,7 +52,7 @@ public class AWSExceptionsTest {
     AmazonServiceException e =
         new AmazonServiceException("Test Amazon client error");
     e.setErrorCode("OperationNotPermitted");
-    AWSExceptions.propagate(e);
+    AWSExceptions.propagate(null, e);
   }
 
   @Test(expected = UnrecoverableProviderException.class)
@@ -63,13 +63,13 @@ public class AWSExceptionsTest {
         return false;
       }
     };
-    AWSExceptions.propagate(e);
+    AWSExceptions.propagate(null, e);
   }
 
   @Test(expected = TransientProviderException.class)
   public void testTransientProviderException() {
     AmazonServiceException e =
         new AmazonServiceException("Test TransientProviderException");
-    AWSExceptions.propagate(e);
+    AWSExceptions.propagate(null, e);
   }
 }

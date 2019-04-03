@@ -7,7 +7,7 @@
 
     <property name="MAIN_LOG_FILE" value="${MAIN_LOG_FILE:-${LOG_DIR:-logs}/application.log}"/>
     <property name="FILE_LOG_PATTERN"
-              value="[%date{yyyy-MM-dd HH:mm:ss.SSS ZZ}] %-5level [%thread] - %logger{36}: %msg%n"/>
+              value="[%date{yyyy-MM-dd HH:mm:ss.SSS ZZ}] %-5level [%thread] - %logger{120}: %msg%n"/>
 
     <appender name="FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <encoder>

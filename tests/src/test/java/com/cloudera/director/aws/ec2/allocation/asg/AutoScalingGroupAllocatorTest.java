@@ -25,7 +25,6 @@ import static com.cloudera.director.spi.v2.model.InstanceTemplate.InstanceTempla
 import static com.cloudera.director.spi.v2.model.util.SimpleResourceTemplate.SimpleResourceTemplateConfigurationPropertyToken.GROUP_ID;
 import static com.cloudera.director.spi.v2.provider.Launcher.DEFAULT_PLUGIN_LOCALIZATION_CONTEXT;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.AdditionalAnswers.answersWithDelay;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -45,13 +44,18 @@ import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model
 import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.DeleteAutoScalingGroupResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.DescribeAutoScalingGroupsRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.DescribeAutoScalingGroupsResult;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.DetachInstancesRequest;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.DetachInstancesResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.LaunchTemplateSpecification;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.autoscaling.model.UpdateAutoScalingGroupResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.AmazonEC2AsyncClient;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.CreateLaunchTemplateResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DeleteLaunchTemplateResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeLaunchTemplatesRequest;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.DescribeLaunchTemplatesResult;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.TerminateInstancesResult;
 import com.cloudera.director.aws.shaded.com.amazonaws.services.ec2.model.LaunchTemplate;
+import com.cloudera.director.aws.shaded.com.amazonaws.services.securitytoken.AWSSecurityTokenServiceAsyncClient;
 import com.cloudera.director.aws.shaded.com.typesafe.config.Config;
 import com.cloudera.director.aws.shaded.com.typesafe.config.ConfigFactory;
 import com.cloudera.director.spi.v2.model.ConfigurationPropertyToken;
@@ -79,7 +83,6 @@ import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
-import org.mockito.stubbing.Answer;
 
 /**
  * Tests {@link AutoScalingGroupAllocator}.
@@ -96,6 +99,7 @@ public class AutoScalingGroupAllocatorTest {
   private AllocationHelper allocationHelper;
   private AmazonEC2AsyncClient ec2Client;
   private AmazonAutoScalingAsyncClient autoScalingClient;
+  private AWSSecurityTokenServiceAsyncClient stsClient;
 
   @Rule
   public ExpectedException expectedException = ExpectedException.none();
@@ -115,6 +119,7 @@ public class AutoScalingGroupAllocatorTest {
 
     ec2Client = mock(AmazonEC2AsyncClient.class);
     autoScalingClient = mock(AmazonAutoScalingAsyncClient.class);
+    stsClient = mock(AWSSecurityTokenServiceAsyncClient.class);
   }
 
   @SuppressWarnings("unchecked")
@@ -331,45 +336,6 @@ public class AutoScalingGroupAllocatorTest {
 
   @SuppressWarnings("unchecked")
   @Test
-  public void testDelete() throws InterruptedException, ExecutionException, TimeoutException {
-    String groupId = UUID.randomUUID().toString();
-    AutoScalingGroupAllocator autoScalingGroupAllocator =
-        createAutoScalingGroupAllocator(groupId, 10, 0);
-
-    mockDeleteLaunchTemplateSuccess();
-    mockDeleteAutoScalingGroupSuccess();
-
-    autoScalingGroupAllocator.delete();
-
-    verify(ec2Client, times(1)).deleteLaunchTemplate(any());
-    verify(autoScalingClient, times(1)).deleteAutoScalingGroup(any());
-  }
-
-  @SuppressWarnings("unchecked")
-  @Test
-  public void testDelete_UnrecoverableExceptionDeletingLaunchTemplate()
-      throws InterruptedException, ExecutionException, TimeoutException {
-    String groupId = UUID.randomUUID().toString();
-    AutoScalingGroupAllocator autoScalingGroupAllocator =
-        createAutoScalingGroupAllocator(groupId, 0, 0);
-
-    // Mock launch template deletion with AWS exception
-    when(ec2Client.deleteLaunchTemplate(any()))
-        .thenThrow(newUnrecoverableAmazonServiceException());
-
-    mockDeleteAutoScalingGroupSuccess();
-
-    expectedException.expect(
-        nestedMatcher(UnrecoverableProviderException.class, "InvalidParameterValue"));
-
-    autoScalingGroupAllocator.delete();
-
-    verify(ec2Client, times(1)).deleteLaunchTemplate(any());
-    verify(autoScalingClient, times(1)).deleteAutoScalingGroup(any());
-  }
-
-  @SuppressWarnings("unchecked")
-  @Test
   public void testAllocate_TransientExceptionDeletingLaunchTemplate()
       throws InterruptedException, ExecutionException, TimeoutException {
     String groupId = UUID.randomUUID().toString();
@@ -466,10 +432,292 @@ public class AutoScalingGroupAllocatorTest {
     verify(autoScalingClient, times(1)).deleteAutoScalingGroup(any());
   }
 
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteGroup() throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 0, 0);
+
+    mockDeleteLaunchTemplateSuccess();
+    mockDeleteAutoScalingGroupSuccess();
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(0)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(0)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(1)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(1)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteGroup_UnrecoverableExceptionDeletingLaunchTemplate()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 0, 0);
+
+    // Mock launch template deletion with AWS exception
+    when(ec2Client.deleteLaunchTemplate(any()))
+        .thenThrow(newUnrecoverableAmazonServiceException());
+
+    mockDeleteAutoScalingGroupSuccess();
+
+    expectedException.expect(
+        nestedMatcher(UnrecoverableProviderException.class, "InvalidParameterValue"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(0)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(0)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(1)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(1)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances() throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess();
+    mockDetachInstancesSuccess();
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(1)).detachInstances(any());
+    verify(allocationHelper, times(1)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_ReduceMinCount()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess(10, 3, groupId);
+    mockUpdateAutoScalingGroupSuccess();
+    mockDetachInstancesSuccess();
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(1)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(1)).detachInstances(any());
+    verify(allocationHelper, times(1)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_SomeInstancesNotInAutoScalingGroup()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess();
+
+    // Mock Auto Scaling group description with AWS exception
+    when(autoScalingClient.detachInstances(any()))
+        .thenThrow(newAmazonServiceException(
+            "The instance foo is not part of Auto Scaling group " + groupId + ".",
+            ErrorType.Client, "ValidationError"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(11)).detachInstances(any());
+    verify(allocationHelper, times(1)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_UnrecoverableExceptionDescribingAutoScalingGroup()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    // Mock Auto Scaling group description with AWS exception
+    when(autoScalingClient.describeAutoScalingGroups(any()))
+        .thenThrow(newUnrecoverableAmazonServiceException());
+
+    expectedException.expect(
+        nestedMatcher(UnrecoverableProviderException.class, "InvalidParameterValue"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(0)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_TransientExceptionDescribingAutoScalingGroup()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    // Mock Auto Scaling group description with AWS exception
+    when(autoScalingClient.describeAutoScalingGroups(any()))
+        .thenThrow(newRetryableAmazonServiceException());
+
+    expectedException.expect(
+        nestedMatcher(TransientProviderException.class, "OtherRetryableError"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(0)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_UnrecoverableExceptionUpdatingAutoScalingGroup()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess(10, 3, groupId);
+
+    // Mock Auto Scaling group update with AWS exception
+    when(autoScalingClient.updateAutoScalingGroup(any()))
+        .thenThrow(newUnrecoverableAmazonServiceException());
+
+    expectedException.expect(
+        nestedMatcher(UnrecoverableProviderException.class, "InvalidParameterValue"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(1)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(0)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_TransientExceptionUpdatingAutoScalingGroup()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess(10, 3, groupId);
+
+    // Mock Auto Scaling group update with AWS exception
+    when(autoScalingClient.updateAutoScalingGroup(any()))
+        .thenThrow(newRetryableAmazonServiceException());
+
+    expectedException.expect(
+        nestedMatcher(TransientProviderException.class, "OtherRetryableError"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(1)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(0)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_UnrecoverableExceptionDetachingAllInstances()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess();
+
+    // Mock Auto Scaling group description with AWS exception
+    when(autoScalingClient.detachInstances(any()))
+        .thenThrow(newUnrecoverableAmazonServiceException());
+
+    expectedException.expect(
+        nestedMatcher(UnrecoverableProviderException.class, "InvalidParameterValue"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(1)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
+  @SuppressWarnings("unchecked")
+  @Test
+  public void testDeleteInstances_TransientExceptionDetachingAllInstances()
+      throws InterruptedException, ExecutionException, TimeoutException {
+    String groupId = UUID.randomUUID().toString();
+    AutoScalingGroupAllocator autoScalingGroupAllocator =
+        createAutoScalingGroupAllocator(groupId, 10, 0);
+
+    mockDescribeAutoScalingGroupsSuccess();
+
+    // Mock Auto Scaling group description with AWS exception
+    when(autoScalingClient.detachInstances(any()))
+        .thenThrow(newRetryableAmazonServiceException());
+
+    expectedException.expect(
+        nestedMatcher(TransientProviderException.class, "OtherRetryableError"));
+
+    autoScalingGroupAllocator.delete();
+
+    verify(autoScalingClient, times(1)).describeAutoScalingGroups(any());
+    verify(autoScalingClient, times(0)).updateAutoScalingGroup(any());
+    verify(autoScalingClient, times(1)).detachInstances(any());
+    verify(allocationHelper, times(0)).doDelete(any());
+    verify(ec2Client, times(0)).deleteLaunchTemplate(any());
+    verify(autoScalingClient, times(0)).deleteAutoScalingGroup(any());
+  }
+
   private AutoScalingGroupAllocator createAutoScalingGroupAllocator(String groupId,
       int desiredCount, int minCount) {
-    return new AutoScalingGroupAllocator(allocationHelper, ec2Client, autoScalingClient,
-        createEC2InstanceTemplate(groupId), desiredCount, minCount);
+    ImmutableList.Builder<String> listBuilder = ImmutableList.builder();
+    for (int i = 0; i < desiredCount; i++) {
+      listBuilder.add(UUID.randomUUID().toString());
+    }
+    return createAutoScalingGroupAllocator(groupId, listBuilder.build(), minCount);
+  }
+
+  private AutoScalingGroupAllocator createAutoScalingGroupAllocator(String groupId,
+      Collection<String> instanceIds, int minCount) {
+    return new AutoScalingGroupAllocator(allocationHelper, ec2Client, autoScalingClient, stsClient,
+        createEC2InstanceTemplate(groupId), instanceIds, minCount);
   }
 
   private EC2InstanceTemplate createEC2InstanceTemplate(String groupId) {
@@ -513,9 +761,14 @@ public class AutoScalingGroupAllocatorTest {
   }
 
   private void mockDescribeAutoScalingGroupsSuccess(String... asgNames) {
+    mockDescribeAutoScalingGroupsSuccess(null, null, asgNames);
+  }
+
+  private void mockDescribeAutoScalingGroupsSuccess(Integer desiredCapacity, Integer minSize,
+      String... asgNames) {
     // Mock Auto Scaling Groups
     List<AutoScalingGroup> autoScalingGroups =
-        mockAutoScalingGroups(asgNames);
+        mockAutoScalingGroups(desiredCapacity, minSize, asgNames);
     // Mock Auto Scaling Group description
     DescribeAutoScalingGroupsResult autoScalingGroupsResult =
         mock(DescribeAutoScalingGroupsResult.class);
@@ -549,6 +802,22 @@ public class AutoScalingGroupAllocatorTest {
         .thenReturn(asgResult);
   }
 
+  private void mockUpdateAutoScalingGroupSuccess() {
+    // Mock ASG update
+    UpdateAutoScalingGroupResult asgResult =
+        mock(UpdateAutoScalingGroupResult.class);
+    when(autoScalingClient.updateAutoScalingGroup(any()))
+        .thenReturn(asgResult);
+  }
+
+  private void mockDetachInstancesSuccess() {
+    // Mock instance detachment
+    DetachInstancesResult detachInstancesResult =
+        mock(DetachInstancesResult.class);
+    when(autoScalingClient.detachInstances(any()))
+        .thenReturn(detachInstancesResult);
+  }
+
   private List<LaunchTemplate> mockLaunchTemplates(String[] launchTemplateNames) {
     ImmutableList.Builder<LaunchTemplate> builder =
         ImmutableList.<LaunchTemplate>builder();
@@ -561,7 +830,8 @@ public class AutoScalingGroupAllocatorTest {
     return builder.build();
   }
 
-  private List<AutoScalingGroup> mockAutoScalingGroups(String[] asgNames) {
+  private List<AutoScalingGroup> mockAutoScalingGroups(Integer desiredCapacity, Integer minSize,
+      String[] asgNames) {
     ImmutableList.Builder<AutoScalingGroup> builder =
         ImmutableList.<AutoScalingGroup>builder();
     for (String asgName : asgNames) {
@@ -570,6 +840,12 @@ public class AutoScalingGroupAllocatorTest {
       LaunchTemplateSpecification launchTemplateSpecification = mock(LaunchTemplateSpecification.class);
       when(launchTemplateSpecification.getLaunchTemplateName()).thenReturn(asgName);
       when(autoScalingGroup.getLaunchTemplate()).thenReturn(launchTemplateSpecification);
+      if (desiredCapacity != null) {
+        when(autoScalingGroup.getDesiredCapacity()).thenReturn(desiredCapacity);
+      }
+      if (minSize != null) {
+        when(autoScalingGroup.getMinSize()).thenReturn(minSize);
+      }
       builder.add(autoScalingGroup);
     }
 
