@@ -152,6 +152,7 @@ public enum EC2ProviderConfigurationPropertyToken
       .defaultPlaceholder("Please select a region")
       .widget(ConfigurationProperty.Widget.OPENLIST)
       .addValidValues(
+          "ap-east-1",
           "ap-northeast-1",
           "ap-northeast-2",
           "ap-south-1",
@@ -159,6 +160,7 @@ public enum EC2ProviderConfigurationPropertyToken
           "ap-southeast-2",
           "ca-central-1",
           "eu-central-1",
+          "eu-north-1",
           "eu-west-1",
           "eu-west-2",
           "eu-west-3",

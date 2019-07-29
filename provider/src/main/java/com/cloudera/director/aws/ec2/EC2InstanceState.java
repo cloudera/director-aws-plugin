@@ -77,7 +77,13 @@ public class EC2InstanceState extends AbstractInstanceState<InstanceStateName> {
    * @param instanceStatus       the instance status
    * @param instanceStateDetails the provider-specific instance state details
    */
-  public EC2InstanceState(InstanceStatus instanceStatus, InstanceStateName instanceStateDetails) {
+  private EC2InstanceState(InstanceStatus instanceStatus, InstanceStateName instanceStateDetails) {
     super(instanceStatus, instanceStateDetails);
+  }
+
+  @Override
+  public String toString() {
+    InstanceStateName details = unwrap();
+    return getInstanceStatus().toString() + " (EC2: " + (details != null ? details.toString() : "unknown") + ")";
   }
 }

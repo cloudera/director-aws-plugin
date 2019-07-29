@@ -23,7 +23,7 @@
     <groupId>com.cloudera.director</groupId>
     <artifactId>aws</artifactId>
     <name>Cloudera Altus Director :: Plugins :: AWS</name>
-    <version>2.2.1</version>
+    <version>2.3.0</version>
     <packaging>pom</packaging>
 
     <modules>

@@ -40,11 +40,11 @@ public class MetadataPropertiesTest {
   public void testEphemeralDeviceMappingsAreInSyncWithVirtualizationMappings() throws IOException {
     Properties ephemeralDeviceMappings = new Properties();
     ephemeralDeviceMappings.load(
-        ClassLoader.class.getResourceAsStream(DEFAULT_EPHEMERAL_DEVICE_MAPPINGS));
+        MetadataPropertiesTest.class.getResourceAsStream(DEFAULT_EPHEMERAL_DEVICE_MAPPINGS));
 
     Properties virtualizationMappings = new Properties();
     virtualizationMappings.load(
-        ClassLoader.class.getResourceAsStream(DEFAULT_VIRTUALIZATION_MAPPINGS));
+        MetadataPropertiesTest.class.getResourceAsStream(DEFAULT_VIRTUALIZATION_MAPPINGS));
 
     Set<String> instanceTypes = Sets.newHashSet();
     for (Object vmValue : virtualizationMappings.values()) {
