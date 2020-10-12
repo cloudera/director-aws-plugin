@@ -47,7 +47,7 @@
         <guava.version>20.0</guava.version>
         <jackson.version>2.9.6</jackson.version>
         <jaxb.version>2.2.11</jaxb.version>
-        <junit.version>4.12</junit.version>
+        <junit.version>4.13.1</junit.version>
         <jsr305.version>2.0.2</jsr305.version>
         <mockito.version>2.23.0</mockito.version>
         <retryer.version>2.0.0</retryer.version>
