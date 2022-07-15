@@ -45,7 +45,7 @@
         <commons-lang3.version>3.5</commons-lang3.version>
         <director-spi-v2.version>2.2.1</director-spi-v2.version>
         <guava.version>20.0</guava.version>
-        <jackson.version>2.9.6</jackson.version>
+        <jackson.version>2.12.6.1</jackson.version>
         <jaxb.version>2.2.11</jaxb.version>
         <junit.version>4.12</junit.version>
         <jsr305.version>2.0.2</jsr305.version>
